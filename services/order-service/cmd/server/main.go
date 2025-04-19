@@ -6,6 +6,6 @@ import (
 )
 
 func main() {
-    log.Println("Starting service...")
+    log.Println("Starting service....")
     http.ListenAndServe(":8080", nil)
 }
