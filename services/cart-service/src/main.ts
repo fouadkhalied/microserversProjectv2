@@ -11,7 +11,7 @@ async function bootstrap() {
   });
 
   await app.listen();
-  console.log('📡 NestJS microservice listening to NATS...');
+  console.log('📡 NestJS microservice listening to NATS....');
 }
 bootstrap();
 
