@@ -1,33 +1,44 @@
 package main
 
 import (
-	"log"
-	"net/http"
-	"user-service/internal/db"
-	"user-service/internal/messaging"
+    "log"
+    "net/http"
+    "user-service/internal/config"
+    "user-service/internal/db"
+    "user-service/internal/delivery/handler"
+    "user-service/internal/delivery/messaging"
+    "user-service/internal/repository"
+    "user-service/internal/usecase"
+    "github.com/gorilla/mux"
 )
 
 func main() {
-	err := db.Connect()
-	if err != nil {
-		log.Fatal("❌ Failed to connect to MongoDB:", err)
-	}
+    cfg := config.Load()
+    client := db.Connect(cfg.MongoURI)
+    database := client.Database("userservice")
+    natsConn , err := messaging.ConnectNats()
 
-	err2 := messaging.ConnectNats()
+    if err != nil {
+        log.Println("❌ Failed to connect to NATS")
+    }
 
-	if err2 != nil {
-		log.Fatal("❌ Failed to connect to NATS:", err)
-	}
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		err := messaging.PublishCartMessage(`{"message": "New cart created for user 123"}`)
-		if err != nil {
-			http.Error(w, "❌ Failed to send NATS message", http.StatusInternalServerError)
-			return
-		}
-		w.Write([]byte("User Service with MongoDB is running!"))
-	})
+    userRepo := repository.NewUserRepo(database)
+    userUC := usecase.NewUserUsecase(userRepo)
+    handler := handler.NewHandler(userUC)
 
-	log.Println("🚀 Server running on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
-	
+    // Register NATS subscriptions
+    messaging.NewHandler(natsConn, *userUC)
+
+    // REST API
+    r := mux.NewRouter()
+    r.HandleFunc("/user/register", handler.Register).Methods("POST")
+    r.HandleFunc("/user/login", handler.Login).Methods("POST")
+
+    go func() {
+        log.Println("User Service listening on port 3001")
+        log.Println(http.ListenAndServe(":3001", r))
+    }()
+
+    // Keep the service running
+    select {}
 }
