@@ -1,44 +1,107 @@
 package main
 
 import (
-    "log"
-    "net/http"
-    "user-service/internal/config"
-    "user-service/internal/db"
-    "user-service/internal/delivery/handler"
-    "user-service/internal/delivery/messaging"
-    "user-service/internal/repository"
-    "user-service/internal/usecase"
-    "github.com/gorilla/mux"
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	//"user-service/internal/config"
+	"user-service/internal/delivery/handler"
+	"user-service/internal/delivery/messaging"
+	"user-service/internal/repository"
+	"user-service/internal/usecase"
+    "user-service/internal/infastructure"
+	"github.com/gorilla/mux"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+	"time"
 )
 
 func main() {
-    cfg := config.Load()
-    client := db.Connect(cfg.MongoURI)
-    database := client.Database("userservice")
-    natsConn , err := messaging.ConnectNats()
+	// Load configuration
+	//cfg := config.Load()
 
-    if err != nil {
-        log.Println("❌ Failed to connect to NATS")
-    }
+	// Create a context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-    userRepo := repository.NewUserRepo(database)
-    userUC := usecase.NewUserUsecase(userRepo)
-    handler := handler.NewHandler(userUC)
+	// PostgreSQL connection
+	pgPool, err := pgxpool.New(ctx, "postgresql://postgres:pfYtJzUVVcksnbRPNwoMUMeAbluqMqgJ@centerbeam.proxy.rlwy.net:44785/railway")
+	if err != nil {
+		log.Fatalf("Unable to connect to PostgreSQL: %v", err)
+	}
+	defer pgPool.Close()
 
-    // Register NATS subscriptions
-    messaging.NewHandler(natsConn, *userUC)
+	// Redis connection
+    redisClient := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379", // Redis is running on the host's localhost (in Docker)
+	})
+	defer redisClient.Close()
 
-    // REST API
-    r := mux.NewRouter()
-    r.HandleFunc("/user/register", handler.Register).Methods("POST")
-    r.HandleFunc("/user/login", handler.Login).Methods("POST")
+	// NATS connection
+	natsConn, err := messaging.ConnectNats()
+	if err != nil {
+		log.Fatalf("❌ Failed to connect to NATS: %v", err)
+	}
 
-    go func() {
-        log.Println("User Service listening on port 3001")
-        log.Println(http.ListenAndServe(":3001", r))
-    }()
+	// Repositories, Usecase, and JWTService
+	userRepo := repository.NewUserRepo(pgPool)
+	redisRepo := repository.NewRedisRepo(redisClient)
+    jwtService := infastructure.NewJWTService()
+	userUsecase := usecase.NewUserUsecase(userRepo, redisRepo, jwtService)
 
-    // Keep the service running
-    select {}
+	// Register NATS subscriptions
+	messaging.NewHandler(natsConn, userUsecase)
+
+	// Handler setup
+	handler := handler.NewHandler(userUsecase)
+
+	// REST API Router
+	r := mux.NewRouter()
+	r.HandleFunc("/user/register", handler.Register).Methods("POST")
+	r.HandleFunc("/user/login", handler.Login).Methods("POST")
+
+	// HTTP Server
+	server := &http.Server{
+		Addr:    ":3001",
+		Handler: r,
+	}
+
+	// Graceful shutdown handling
+	go func() {
+		log.Println("User Service listening on port 3001")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Error starting HTTP server: %v", err)
+		}
+	}()
+
+	// Wait for termination signal (SIGINT, SIGTERM)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// Block until we receive a signal
+	<-sigCh
+	log.Println("Received shutdown signal, shutting down...")
+
+	// Gracefully shutdown the HTTP server
+	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Error shutting down server: %v", err)
+	}
+
+	// Closing connections gracefully
+	natsConn.Close()
+	log.Println("Closed NATS connection")
+
+	redisClient.Close()
+	log.Println("Closed Redis connection")
+
+	pgPool.Close()
+	log.Println("Closed PostgreSQL connection")
+
+	log.Println("Service shutdown complete")
 }

@@ -1,54 +1,61 @@
 package usecase
 
 import (
-	"context"
-	"log"
-	"user-service/internal/domain"
-	"user-service/internal/repository"
-
-	"golang.org/x/crypto/bcrypt"
+    "context"
+    "user-service/internal/domain"
+    "user-service/internal/repository"
+    "time"
+    "golang.org/x/crypto/bcrypt"
+    "user-service/internal/infastructure"
 )
 
 type UserUsecase struct {
-    repo *repository.UserRepo
+    userRepo  *repository.UserRepo
+    redisRepo *repository.RedisRepo
+    jwtService *infastructure.JWTService
 }
 
-func NewUserUsecase(repo *repository.UserRepo) *UserUsecase {
-    return &UserUsecase{repo}
+func NewUserUsecase(userRepo *repository.UserRepo, redisRepo *repository.RedisRepo , jwtService *infastructure.JWTService) *UserUsecase {
+    return &UserUsecase{userRepo: userRepo, redisRepo: redisRepo , jwtService: jwtService}
 }
 
 func (uc *UserUsecase) RegisterUser(ctx context.Context, user *domain.User) error {
-    // Password hash 
-    hashedPassword , err := bcrypt.GenerateFromPassword([]byte(user.Password),bcrypt.DefaultCost) 
+    hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
     if err != nil {
-        log.Println("failed to hash password")
         return err
     }
-
     user.Password = string(hashedPassword)
-
-    if user.Tokens == nil {
-        user.Tokens = []string{} // Initialize as empty array
-    }
-    return uc.repo.CreateUser(ctx, user)
+    return uc.userRepo.CreateUser(ctx, user)
 }
 
-func (uc * UserUsecase) LoginUser(ctx context.Context , user * domain.User) (string , error) {
-
-    // find user and check password
-    myUser,err := uc.repo.FindByCredintials(ctx,user)
-
+func (uc *UserUsecase) LoginUser(ctx context.Context, username, password string) (string, error) {
+    user, err := uc.userRepo.FindByCredentials(ctx, username)
     if err != nil {
-        log.Println("❌ Cannot find user",err)
+        return "", err
+    }
+
+    err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
+    if err != nil {
+        return "", err
+    }
+
+    // Generate JWT token (implementation not shown here)
+    token,err := uc.jwtService.GenerateToken(user.ID)
+    if err != nil {
         return "",err
     }
 
-    // generate token 
-    token,err := uc.repo.GenerateToken(ctx,myUser)
-
+    // Store token in Redis with expiration
+    err = uc.redisRepo.SetToken(ctx, token, user.ID, time.Hour*24)
     if err != nil {
-        log.Println("❌ Cannot generate token")
+        return "", err
     }
 
-    return token,err
+    // Update tokens in PostgreSQL
+    err = uc.userRepo.UpdateTokens(ctx, user.ID, token)
+    if err != nil {
+        return "", err
+    }
+
+    return token, nil
 }

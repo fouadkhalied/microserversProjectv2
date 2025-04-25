@@ -1,9 +1,9 @@
 package domain
 
 type User struct {
-    ID       string `bson:"_id,omitempty" json:"id"`
-    Username string `bson:"username" json:"username"`
-    Email    string `bson:"email" json:"email"`
-    Password string `bson:"password" json:"password"`
-    Tokens   []string `bson:"tokens"`
+	ID       string   `json:"id"`       // UUID string from PostgreSQL
+	Username string   `json:"username"`
+	Email    string   `json:"email"`
+	Password string   `json:"password"`
+	Tokens   []string `json:"tokens"`   // Stored in PostgreSQL array column
 }

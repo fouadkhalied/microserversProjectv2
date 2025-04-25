@@ -3,11 +3,11 @@ package config
 import "os"
 
 type Config struct {
-    MongoURI string
+    PostgreSQL string
 }
 
 func Load() *Config {
     return &Config{
-        MongoURI: os.Getenv("MongoURI"),
+        PostgreSQL: os.Getenv("PostgreSQL"),
     }
 }

@@ -1,88 +1,39 @@
 package repository
 
 import (
-	"context"
-	"time"
-    "log"
-	"user-service/internal/domain"
-    "os"
+    "context"
     "fmt"
-	jwt "github.com/golang-jwt/jwt/v5"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"golang.org/x/crypto/bcrypt"
-    "go.mongodb.org/mongo-driver/bson/primitive"
+    "user-service/internal/domain"
+    "github.com/jackc/pgx/v5/pgxpool"
 )
 
 type UserRepo struct {
-    collection *mongo.Collection
+    db *pgxpool.Pool
 }
 
-func NewUserRepo(db *mongo.Database) *UserRepo {
-    return &UserRepo{
-        collection: db.Collection("users"),
-    }
+func NewUserRepo(db *pgxpool.Pool) *UserRepo {
+    return &UserRepo{db: db}
 }
 
 func (r *UserRepo) CreateUser(ctx context.Context, user *domain.User) error {
-    _, err := r.collection.InsertOne(ctx, user)
+    _, err := r.db.Exec(ctx, insertUserQuery, user.Username, user.Email, user.Password)
     return err
 }
 
-func (r *UserRepo) FindByCredintials(ctx context.Context , user *domain.User) (*domain.User, error) {
-    var foundUser domain.User
+func (r *UserRepo) FindByCredentials(ctx context.Context, username string) (*domain.User, error) {
+    row := r.db.QueryRow(ctx, findUserByUsernameQuery, username)
 
-    // Query MongoDB to find the user by username
-    err := r.collection.FindOne(ctx, bson.M{"username": user.Username}).Decode(&foundUser)
+    var user domain.User
+    err := row.Scan(&user.ID, &user.Username, &user.Email, &user.Password, &user.Tokens)
     if err != nil {
-        // Return a specific error if user is not found
-        return nil, fmt.Errorf("user not found: %v", err)
+        return nil, fmt.Errorf("user not found: %w", err)
     }
 
-    // Compare the stored password hash with the provided password
-    err = bcrypt.CompareHashAndPassword([]byte(foundUser.Password), []byte(user.Password))
-    if err != nil {
-        // Return a general authentication error, do not specify password mismatch
-        return nil, fmt.Errorf("authentication failed: %v", err)
-    }
-
-    // Return the found user if authentication is successful
-    return &foundUser, nil
+    return &user, nil
 }
 
-
-func (r *UserRepo) GenerateToken(ctx context.Context , user *domain.User) (string,error)  {
-    claims := jwt.MapClaims{
-        "userID" : user.ID,
-        "exp" : time.Now().Add(time.Hour * 72).Unix(),
-    }
-
-    token := jwt.NewWithClaims(jwt.SigningMethodHS256 , claims)
-
-    signedToken,err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
-
-    if err != nil {
-        return "",err
-    }
-
-    if user.Tokens == nil {
-        user.Tokens = []string{}
-    }
-    
-
-    user.Tokens = append(user.Tokens, signedToken)
-
-     // Save updated token list to MongoDB
-    
-     log.Println(user.ID)
-     id, err := primitive.ObjectIDFromHex(user.ID)
-     if err != nil {
-         return "", err
-     }
-     
-     _, err = r.collection.UpdateByID(ctx, id, bson.M{
-         "$push": bson.M{"tokens": signedToken}, // or "$set" if you're replacing the array
-     })
-
-    return signedToken,err
+func (r *UserRepo) UpdateTokens(ctx context.Context, userID string, token string) error {
+    _, err := r.db.Exec(ctx, updateUserTokensQuery, token, userID)
+    return err
 }
+
