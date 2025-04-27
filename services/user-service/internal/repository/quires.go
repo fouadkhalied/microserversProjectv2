@@ -2,8 +2,8 @@ package repository
 
 const (
 	insertUserQuery = `
-		INSERT INTO users (id, username, email, password, tokens)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO users (username, email, password)
+		VALUES ($1, $2, $3)
 	`
 
 	findUserByUsernameQuery = `

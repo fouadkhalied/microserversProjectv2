@@ -27,18 +27,35 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// PostgreSQL connection
-	pgPool, err := pgxpool.New(ctx, "postgresql://postgres:pfYtJzUVVcksnbRPNwoMUMeAbluqMqgJ@centerbeam.proxy.rlwy.net:44785/railway")
-	if err != nil {
-		log.Fatalf("Unable to connect to PostgreSQL: %v", err)
-	}
-	defer pgPool.Close()
+	// PostgreSQL connection with optimized pool settings
+    pgConfig, err := pgxpool.ParseConfig("postgresql://postgres:pfYtJzUVVcksnbRPNwoMUMeAbluqMqgJ@centerbeam.proxy.rlwy.net:44785/railway")
+    if err != nil {
+        log.Fatalf("Unable to parse PostgreSQL config: %v", err)
+    }
+    
+    // Configure optimal connection pool
+    pgConfig.MaxConns = 20
+    pgConfig.MinConns = 5
+    pgConfig.MaxConnLifetime = time.Hour
+    pgConfig.MaxConnIdleTime = 30 * time.Minute
+    pgConfig.HealthCheckPeriod = 5 * time.Minute
 
-	// Redis connection
-    redisClient := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379", // Redis is running on the host's localhost (in Docker)
-	})
-	defer redisClient.Close()
+    pgPool, err := pgxpool.NewWithConfig(ctx, pgConfig)
+    if err != nil {
+        log.Fatalf("Unable to connect to PostgreSQL: %v", err)
+    }
+    defer pgPool.Close()
+
+	 // Configure Redis with connection pooling
+	 redisClient := redis.NewClient(&redis.Options{
+        Addr: "localhost:6379",
+        PoolSize: 10,                  // Set pool size
+        MinIdleConns: 5,               // Keep minimum connections open
+        DialTimeout:  5 * time.Second,
+        ReadTimeout:  3 * time.Second,
+        WriteTimeout: 3 * time.Second,
+    })
+    defer redisClient.Close()
 
 	// NATS connection
 	natsConn, err := messaging.ConnectNats()

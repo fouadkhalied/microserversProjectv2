@@ -14,9 +14,13 @@ type UserRepo struct {
 func NewUserRepo(db *pgxpool.Pool) *UserRepo {
     return &UserRepo{db: db}
 }
+func (r *UserRepo) InitializeConnectionPool(minConns, maxConns int) {
+    r.db.Config().MinConns = int32(minConns)
+    r.db.Config().MaxConns = int32(maxConns)
+}
 
 func (r *UserRepo) CreateUser(ctx context.Context, user *domain.User) error {
-    _, err := r.db.Exec(ctx, insertUserQuery, user.Username, user.Email, user.Password)
+    _, err := r.db.Exec(ctx, insertUserQuery,user.Username, user.Email, user.Password)
     return err
 }
 
@@ -33,7 +37,7 @@ func (r *UserRepo) FindByCredentials(ctx context.Context, username string) (*dom
 }
 
 func (r *UserRepo) UpdateTokens(ctx context.Context, userID string, token string) error {
-    _, err := r.db.Exec(ctx, updateUserTokensQuery, token, userID)
+    _, err := r.db.Exec(ctx, updateUserTokensQuery,userID,token)
     return err
 }
 
