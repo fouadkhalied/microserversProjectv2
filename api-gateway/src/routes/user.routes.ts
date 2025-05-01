@@ -1,106 +1,128 @@
+// api-gateway/src/routes/user.routes.ts
+
 import { HttpRequest, HttpResponse } from 'uWebSockets.js';
 import uWS from 'uWebSockets.js';
 import { ServiceClient } from '../services/server-client';
 
 export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceClient) {
-  // Health check route
-  app.get('/api/user/register', (res: HttpResponse, req: HttpRequest) => {
-    res.writeStatus('200 OK')
-      .writeHeader('Content-Type', 'application/json')
-      .end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
-  });
-
-  // Example: Fetch products
-  app.get('/api/products', async (res, req) => {
-    try {
-      const products = await client.fetchFromService('product-service', '/products') || {"names" : "def"};
-      res.writeStatus('200 OK')
-        .writeHeader('Content-Type', 'application/json')
-        .end(JSON.stringify(products));
-    } catch (error) {
-      console.error('Error fetching products:', error);
-      res.writeStatus('500 Internal Server Error')
-        .end(JSON.stringify({ error: 'Failed to fetch products' }));
-    }
-  });
-
+  // User registration endpoint
   app.post('/api/users/register', (res, req) => {
-    let buffer = ''; // This variable will store the incoming request body
-    res.onData((chunk, isLast) => { // `onData` event handler processes chunks of data from the client
-      buffer += Buffer.from(chunk).toString(); // Append the received chunk to the `buffer`
+    let buffer = '';
+    
+    res.onData((chunk, isLast) => {
+      buffer += Buffer.from(chunk).toString();
       
-      // When all data is received (isLast is true)
       if (isLast) {
         try {
-          // Parse the buffer content as JSON
           const userData = JSON.parse(buffer);
-  
-          // Validate user data (e.g., check for missing fields)
+          
+          // Basic validation
           if (!userData.username || !userData.password) {
-            res.writeStatus('400 Bad Request') // If validation fails, send 400 status
+            res.writeStatus('400 Bad Request')
+              .writeHeader('Content-Type', 'application/json')
               .end(JSON.stringify({ error: 'Username and password are required' }));
             return;
           }
-
-          console.log(userData);
           
-  
-          // Send the parsed data to a service using NATS (a message broker) for registration
-          client.sendMessageToService('user-service', 'user.register', userData)
-            .then(response => { // Handle the response from the service
-              res.writeStatus('201 Created') // Success status code
-                .writeHeader('Content-Type', 'application/json') // Set the content type to JSON
-                .end(JSON.stringify(response)); // Send the response from the service back to the client
+          // Call user service via gRPC
+          client.postToService('user-service', '/user/register', userData)
+            .then(response => {
+              res.writeStatus('201 Created')
+                .writeHeader('Content-Type', 'application/json')
+                .end(JSON.stringify(response));
             })
-            .catch(err => { // If the service call fails
+            .catch(err => {
               console.error('Registration error:', err);
-              res.writeStatus('500 Internal Server Error') // Set 500 Internal Server Error status
-                .end(JSON.stringify({ error: 'Failed to register user' })); // Send error message
+              res.writeStatus('500 Internal Server Error')
+                .writeHeader('Content-Type', 'application/json')
+                .end(JSON.stringify({ error: 'Failed to register user' }));
             });
-        } catch (err) { // If JSON parsing fails
+        } catch (err) {
           console.error('Invalid request body:', err);
-          res.writeStatus('400 Bad Request') // Set 400 Bad Request status
-            .end(JSON.stringify({ error: 'Invalid JSON format' })); // Send error message for invalid JSON
+          res.writeStatus('400 Bad Request')
+            .writeHeader('Content-Type', 'application/json')
+            .end(JSON.stringify({ error: 'Invalid JSON format' }));
         }
       }
     });
-  
-    // Handle the case when the client aborts the request
+    
     res.onAborted(() => {
       console.log('Client aborted registration request');
     });
   });
   
-
-  // Example: User login
+  // User login endpoint
   app.post('/api/users/login', (res, req) => {
     let buffer = '';
+    
     res.onData((chunk, isLast) => {
       buffer += Buffer.from(chunk).toString();
+      
       if (isLast) {
-        try {
-          const userData = JSON.parse(buffer);
-          client.sendMessageToService('user-service', 'user.login', userData)
-            .then(response => {
-              res.writeStatus('200 OK')
+        (async () => {
+          try {
+            const userData = JSON.parse(buffer);
+            
+            // Basic validation
+            if (!userData.username || !userData.password) {
+              res.writeStatus('400 Bad Request')
                 .writeHeader('Content-Type', 'application/json')
-                .end(JSON.stringify(response));
-            })
-            .catch(err => {
-              console.error('Login error:', err);
-              res.writeStatus('401 Unauthorized')
-                .end(JSON.stringify({ error: 'Authentication failed' }));
-            });
-        } catch (err) {
-          console.error('Invalid request body:', err);
-          res.writeStatus('400 Bad Request')
-            .end(JSON.stringify({ error: 'Invalid JSON format' }));
-        }
+                .end(JSON.stringify({ error: 'Username and password are required' }));
+              return;
+            }
+            
+            const response = await client.postToService('user-service', '/user/login', userData);
+            
+            res.writeStatus('200 OK')
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify(response));
+          } catch (err) {
+            console.error('Login error:', err);
+            res.writeStatus('400 Bad Request')
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify({ error: 'Invalid credentials or format' }));
+          }
+        })();
       }
     });
-
+    
     res.onAborted(() => {
       console.log('Client aborted login request');
     });
+  });
+
+  // Get user profile endpoint
+  app.get('/api/users/profile', (res, req) => {
+    // Get the authorization header
+    const authToken = req.getHeader('authorization');
+    if (!authToken) {
+      res.writeStatus('401 Unauthorized')
+        .writeHeader('Content-Type', 'application/json')
+        .end(JSON.stringify({ error: 'Authentication required' }));
+      return;
+    }
+
+    // Example: extract user ID (this would typically come from validating a JWT)
+    const userId = '123'; // Placeholder
+    
+    client.postToService('user-service', '/user/get', { id: userId })
+      .then(userProfile => {
+        res.writeStatus('200 OK')
+          .writeHeader('Content-Type', 'application/json')
+          .end(JSON.stringify(userProfile));
+      })
+      .catch(err => {
+        console.error('Error fetching user profile:', err);
+        res.writeStatus('500 Internal Server Error')
+          .writeHeader('Content-Type', 'application/json')
+          .end(JSON.stringify({ error: 'Failed to fetch user profile' }));
+      });
+  });
+
+  // Health check endpoint
+  app.get('/api/health', (res, req) => {
+    res.writeStatus('200 OK')
+      .writeHeader('Content-Type', 'application/json')
+      .end(JSON.stringify({ status: 'UP' }));
   });
 }

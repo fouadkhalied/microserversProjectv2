@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+service UserService {
+  // RPC for fetching user details
+  rpc GetUser (UserRequest) returns (UserResponse);
+
+  // RPC for user registration
+  rpc RegisterUser (RegisterRequest) returns (RegisterResponse);
+
+  // RPC for user login
+  rpc LoginUser (LoginRequest) returns (LoginResponse);
+}
+
+// Request for GetUser RPC
+message UserRequest {
+  string id = 1; // User ID to fetch details
+}
+
+// Response for GetUser RPC
+message UserResponse {
+  string id = 1;
+  string name = 2;
+  string email = 3; // Add more fields as needed
+}
+
+// Request for RegisterUser RPC
+message RegisterRequest {
+  string username = 1;
+  string password = 2;
+  string email = 3;
+}
+
+// Response for RegisterUser RPC
+message RegisterResponse {
+  string id = 1; // User ID after registration
+  string message = 2; // Success message
+}
+
+// Request for LoginUser RPC
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+// Response for LoginUser RPC
+message LoginResponse {
+  string token = 1; // JWT token or session ID
+  string message = 2; // Success message
+}
