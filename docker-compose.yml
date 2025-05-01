@@ -1,1 +1,23 @@
-nothing to do
+version: '3'
+
+services:
+  api-gateway:
+    build: ./api-gateway  # Directory containing your uWebSockets app
+    networks:
+      - app-network-nginx
+    # If needed, you can map the app's port for direct access
+    # ports:
+    #   - "9001:9001"
+
+  nginx:
+    build: ./infrastructure/nginx  # Directory containing Nginx Dockerfile and config
+    ports:
+      - "80:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - app-network-nginx
+
+networks:
+  app-network-nginx:
+    external: true
