@@ -1,49 +1,104 @@
+// api-gateway/proto/user.proto
+
 syntax = "proto3";
 
 service UserService {
-  // RPC for fetching user details
-  rpc GetUser (UserRequest) returns (UserResponse);
-
-  // RPC for user registration
-  rpc RegisterUser (RegisterRequest) returns (RegisterResponse);
-
-  // RPC for user login
-  rpc LoginUser (LoginRequest) returns (LoginResponse);
+  // User registration
+  rpc RegisterUser (RegisterUserRequest) returns (RegisterUserResponse);
+  
+  // User login
+  rpc LoginUser (LoginUserRequest) returns (LoginUserResponse);
+  
+  // Get user profile
+  rpc GetUser (GetUserRequest) returns (UserProfile);
+  
+  // Update user profile
+  rpc UpdateUser (UpdateUserRequest) returns (UserProfile);
+  
+  // Delete user
+  rpc DeleteUser (DeleteUserRequest) returns (DeleteUserResponse);
+  
+  // Health check
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
 }
 
-// Request for GetUser RPC
-message UserRequest {
-  string id = 1; // User ID to fetch details
-}
-
-// Response for GetUser RPC
-message UserResponse {
-  string id = 1;
-  string name = 2;
-  string email = 3; // Add more fields as needed
-}
-
-// Request for RegisterUser RPC
-message RegisterRequest {
+// Registration request
+message RegisterUserRequest {
   string username = 1;
   string password = 2;
   string email = 3;
+  string full_name = 4;
 }
 
-// Response for RegisterUser RPC
-message RegisterResponse {
-  string id = 1; // User ID after registration
-  string message = 2; // Success message
+// Registration response
+message RegisterUserResponse {
+  bool success = 1;
+  string message = 2;
+  string user_id = 3;
+  string token = 4;
 }
 
-// Request for LoginUser RPC
-message LoginRequest {
+// Login request
+message LoginUserRequest {
   string username = 1;
   string password = 2;
 }
 
-// Response for LoginUser RPC
-message LoginResponse {
-  string token = 1; // JWT token or session ID
-  string message = 2; // Success message
+// Login response
+message LoginUserResponse {
+  bool success = 1;
+  string message = 2;
+  string user_id = 3;
+  string token = 4;
+  UserProfile profile = 5;
+}
+
+// Get user profile request
+message GetUserRequest {
+  string id = 1;
+  // Optional token for authentication
+  string token = 2;
+}
+
+// User profile data
+message UserProfile {
+  string id = 1;
+  string username = 2;
+  string email = 3;
+  string full_name = 4;
+  string avatar_url = 5;
+  repeated string roles = 6;
+  map<string, string> preferences = 7;
+  UserStats stats = 8;
+  int64 created_at = 9;
+  int64 updated_at = 10;
+}
+
+// User statistics
+message UserStats {
+  int32 login_count = 1;
+  int64 last_login_time = 2;
+  int32 active_days = 3;
+}
+
+// Update user request
+message UpdateUserRequest {
+  string id = 1;
+  string token = 2; // for authentication
+  optional string email = 3;
+  optional string full_name = 4;
+  optional string password = 5;
+  optional string avatar_url = 6;
+  map<string, string> preferences = 7;
+}
+
+// Delete user request
+message DeleteUserRequest {
+  string id = 1;
+  string token = 2; // for authentication
+}
+
+// Delete user response
+message DeleteUserResponse {
+  bool success = 1;
 }
