@@ -13,7 +13,7 @@ export class ServiceClient {
   private async initNatsConnection() {
     try {
       this.natsConnection = await connect({
-        servers: "nats.railway.internal" || 'http://localhost:4222'
+        servers: process.env.NATS_URL || 'http://localhost:4222'
       });
       console.log('✅ Connected to NATS server');
       
