@@ -4,24 +4,10 @@ import { ServiceClient } from '../services/server-client';
 
 export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceClient) {
   // Health check route
-  app.get('/api/user/register', (res: HttpResponse, req: HttpRequest) => {
+  app.get('/', (res: HttpResponse, req: HttpRequest) => {
     res.writeStatus('200 OK')
       .writeHeader('Content-Type', 'application/json')
       .end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
-  });
-
-  // Example: Fetch products
-  app.get('/api/products', async (res, req) => {
-    try {
-      const products = await client.fetchFromService('product-service', '/products') || {"names" : "def"};
-      res.writeStatus('200 OK')
-        .writeHeader('Content-Type', 'application/json')
-        .end(JSON.stringify(products));
-    } catch (error) {
-      console.error('Error fetching products:', error);
-      res.writeStatus('500 Internal Server Error')
-        .end(JSON.stringify({ error: 'Failed to fetch products' }));
-    }
   });
 
   app.post('/api/users/register', (res, req) => {
@@ -46,7 +32,7 @@ export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceC
           
   
           // Send the parsed data to a service using NATS (a message broker) for registration
-          client.sendMessageToService('user-service', 'user.register', userData)
+          client.sendBinaryRequest('user-service', 'user.register', userData)
             .then(response => { // Handle the response from the service
               res.writeStatus('201 Created') // Success status code
                 .writeHeader('Content-Type', 'application/json') // Set the content type to JSON
@@ -80,7 +66,7 @@ export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceC
       if (isLast) {
         try {
           const userData = JSON.parse(buffer);
-          client.sendMessageToService('user-service', 'user.login', userData)
+          client.sendBinaryRequest('user-service', 'user.login', userData)
             .then(response => {
               res.writeStatus('200 OK')
                 .writeHeader('Content-Type', 'application/json')
