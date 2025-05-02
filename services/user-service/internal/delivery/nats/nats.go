@@ -1,7 +1,7 @@
 // File: internal/delivery/messaging/handler.go
 // Optimized NATS messaging implementation
 
-package messaging
+package nats
 
 import (
 	"bytes"
@@ -72,7 +72,7 @@ func ConnectNats() (*nats.Conn, error) {
 		}
 
 		// Connect with options
-		nc, err = nats.Connect("nats.railway.internal", opts...)
+		nc, err = nats.Connect("http://localhost:4222", opts...)
 		if err != nil {
 			log.Println("❌ Failed to connect to NATS:", err)
 			return
