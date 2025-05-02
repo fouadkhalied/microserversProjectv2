@@ -312,7 +312,7 @@ export class ServiceClient {
   private getServiceWsUrl(serviceName: string): string {
     const serviceMap: { [key: string]: string } = {
       'product-service': process.env.PRODUCT_SERVICE_WS_URL || 'ws://localhost:3002/ws',
-      'user-service': process.env.USER_SERVICE_WS_URL || 'ws://localhost:3001/ws',
+      'user-service': process.env.USER_SERVICE_WS_URL || 'ws://microserversproject.railway.internal',
       'order-service': process.env.ORDER_SERVICE_WS_URL || 'ws://localhost:3003/ws',
       'cart-service': process.env.CART_SERVICE_WS_URL || 'ws://localhost:3004/ws',
     };
