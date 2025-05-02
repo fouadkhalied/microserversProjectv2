@@ -72,7 +72,7 @@ func ConnectNats() (*nats.Conn, error) {
 		}
 
 		// Connect with options
-		nc, err = nats.Connect("http://localhost:4222", opts...)
+		nc, err = nats.Connect("nats.railway.internal", opts...)
 		if err != nil {
 			log.Println("❌ Failed to connect to NATS:", err)
 			return
