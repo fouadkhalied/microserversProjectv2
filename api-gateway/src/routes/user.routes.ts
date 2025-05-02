@@ -66,7 +66,9 @@ export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceC
       if (isLast) {
         try {
           const userData = JSON.parse(buffer);
-          client.sendBinaryRequest('user-service', 'user.login', userData)
+          console.log(userData);
+          
+          client.sendBinaryRequest('user-service', 'login', userData)
             .then(response => {
               res.writeStatus('200 OK')
                 .writeHeader('Content-Type', 'application/json')

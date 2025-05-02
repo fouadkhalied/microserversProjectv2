@@ -41,7 +41,7 @@ export class ServiceClient {
   private async initNatsConnection() {
     try {
       this.natsConnection = await connect({
-        servers: "nats.railway.internal"
+        servers: "http://localhost:4222"
       });
       console.log('✅ Connected to NATS server');
       
@@ -131,19 +131,20 @@ export class ServiceClient {
         console.warn(`Received response for unknown request ID: ${requestId}`);
         return;
       }
-      
-      // Extract content length (4 bytes)
-      const contentLength = new DataView(buffer.buffer).getUint32(19, true);
-      
-      // Extract content
-      const content = buffer.slice(23, 23 + contentLength);
-      const jsonContent = new TextDecoder().decode(content);
-      
-      // Resolve the pending request
+
       try {
+        // Extract content length (4 bytes)
+        const contentLength = new DataView(buffer.buffer).getUint32(18, true);
+        
+        // Extract content
+        const content = buffer.slice(22, 22 + contentLength);
+        const jsonContent = new TextDecoder().decode(content);
+        
+        // Parse JSON content
         const parsedContent = JSON.parse(jsonContent);
         pendingRequest.resolve(parsedContent);
       } catch (error) {
+        console.error('Error parsing response:', error, 'Raw content:', new TextDecoder().decode(buffer));
         pendingRequest.reject(new Error('Invalid JSON response'));
       }
       
@@ -297,27 +298,25 @@ export class ServiceClient {
   
   // Helper method to get service URL from environment or service discovery
   private getServiceUrl(serviceName: string): string {
-    // In a real implementation, you might use service discovery
-    // For now, we'll use environment variables or defaults
     const serviceMap: { [key: string]: string } = {
-      'product-service': process.env.PRODUCT_SERVICE_URL || 'http://product-service:8080',
+      'product-service': process.env.PRODUCT_SERVICE_URL || 'http://localhost:3002',
       'user-service': process.env.USER_SERVICE_URL || 'http://localhost:3001',
-      'order-service': process.env.ORDER_SERVICE_URL || 'http://order-service:8082',
-      'cart-service': process.env.CART_SERVICE_URL || 'http://cart-service:8083',
+      'order-service': process.env.ORDER_SERVICE_URL || 'http://localhost:3003',
+      'cart-service': process.env.CART_SERVICE_URL || 'http://localhost:3004',
     };
     
-    return serviceMap[serviceName] || `http://${serviceName}:8080`;
+    return serviceMap[serviceName] || `http://localhost:8080`;
   }
   
   // Helper method to get WebSocket service URL
   private getServiceWsUrl(serviceName: string): string {
     const serviceMap: { [key: string]: string } = {
-      'product-service': process.env.PRODUCT_SERVICE_WS_URL || 'ws://product-service:9080',
-      'user-service': process.env.USER_SERVICE_WS_URL || 'ws://user-service:9081',
-      'order-service': process.env.ORDER_SERVICE_WS_URL || 'ws://order-service:9082',
-      'cart-service': process.env.CART_SERVICE_WS_URL || 'ws://cart-service:9083',
+      'product-service': process.env.PRODUCT_SERVICE_WS_URL || 'ws://localhost:3002/ws',
+      'user-service': process.env.USER_SERVICE_WS_URL || 'ws://localhost:3001/ws',
+      'order-service': process.env.ORDER_SERVICE_WS_URL || 'ws://localhost:3003/ws',
+      'cart-service': process.env.CART_SERVICE_WS_URL || 'ws://localhost:3004/ws',
     };
     
-    return serviceMap[serviceName] || `ws://${serviceName}:9080`;
+    return serviceMap[serviceName] || `ws://localhost:8080/ws`;
   }
 }

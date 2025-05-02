@@ -9,7 +9,7 @@ function startServer() {
 
   registerRoutes(app, serviceClient);
 
-  app.listen(4000, (token) => {
+  app.listen(3000, (token) => {
     if (token) {
       console.log('🚀 API Gateway listening on http://localhost:4000');
     } else {
