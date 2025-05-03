@@ -1,18 +1,6 @@
 // api-gateway/src/services/service-client.ts
-import * as uWS from 'uWebSockets.js';
 import { v4 as uuidv4 } from 'uuid';
 import { performance } from 'perf_hooks';
-
-// Binary protocol v1 structure:
-// [
-//   Header (2 bytes): 0x55, 0x57 (UW magic bytes)
-//   Version (1 byte): 0x01 (protocol version)
-//   Request ID (16 bytes): UUID
-//   Method Length (1 byte): Length of method string
-//   Method (variable): UTF-8 encoded method name
-//   Content Length (4 bytes): Length of payload
-//   Content (variable): JSON payload
-// ]
 
 interface PendingRequest {
   resolve: (value: any) => void;
@@ -39,8 +27,6 @@ interface ServiceConfig {
 const DEFAULT_TIMEOUT = 5000; // 5 seconds
 
 export class ServiceClient {
-  private readonly MAGIC_BYTES = new Uint8Array([0x55, 0x57]); // "UW"
-  private readonly PROTOCOL_VERSION = 0x01;
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private serviceConfigs: Map<string, ServiceConfig> = new Map();
   private metrics: Map<string, PerformanceMetrics> = new Map();
@@ -94,8 +80,8 @@ export class ServiceClient {
     return result;
   }
 
-  // Send a binary request to a service
-  async sendBinaryRequest(serviceName: string, method: string, payload: any): Promise<any> {
+  // Send a request to a service
+  async sendRequest(serviceName: string, method: string, payload: any): Promise<any> {
     // Check if service is configured
     if (!this.serviceConfigs.has(serviceName)) {
       throw new Error(`Service "${serviceName}" not configured`);
@@ -121,7 +107,7 @@ export class ServiceClient {
     const startTime = performance.now();
     
     try {
-      return await this.executeBinaryRequest(serviceName, method, payload, requestId, startTime);
+      return await this.executeRequest(serviceName, method, payload, requestId, startTime);
     } catch (error) {
       // Update failure metrics
       serviceMetrics.failedRequests++;
@@ -134,7 +120,7 @@ export class ServiceClient {
     }
   }
   
-  private async executeBinaryRequest(
+  private async executeRequest(
     serviceName: string, 
     method: string, 
     payload: any, 
@@ -143,48 +129,6 @@ export class ServiceClient {
   ): Promise<any> {
     return new Promise((resolve, reject) => {
       const serviceConfig = this.serviceConfigs.get(serviceName)!;
-      const requestIdBytes = this.uuidToBytes(requestId);
-      
-      // Convert method to bytes
-      const methodBytes = new TextEncoder().encode(method);
-      if (methodBytes.length > 255) {
-        reject(new Error('Method name too long'));
-        return;
-      }
-      
-      // Convert payload to JSON bytes
-      const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
-      
-      // Calculate the total message size
-      const messageSize = 2 + 1 + 16 + 1 + methodBytes.length + 4 + payloadBytes.length;
-      const message = new Uint8Array(messageSize);
-      
-      let offset = 0;
-      
-      // Add magic bytes
-      message[offset++] = this.MAGIC_BYTES[0];
-      message[offset++] = this.MAGIC_BYTES[1];
-      
-      // Add protocol version
-      message[offset++] = this.PROTOCOL_VERSION;
-      
-      // Add request ID
-      message.set(requestIdBytes, offset);
-      offset += 16;
-      
-      // Add method length
-      message[offset++] = methodBytes.length;
-      
-      // Add method
-      message.set(methodBytes, offset);
-      offset += methodBytes.length;
-      
-      // Add content length
-      new DataView(message.buffer).setUint32(offset, payloadBytes.length, true);
-      offset += 4;
-      
-      // Add content
-      message.set(payloadBytes, offset);
       
       // Store the pending request
       const timer = setTimeout(() => {
@@ -201,8 +145,8 @@ export class ServiceClient {
         startTime
       });
       
-      // Send the binary request using HTTP
-      this.sendHttpBinaryRequest(serviceName, method, message, requestId)
+      // Send the HTTP request
+      this.sendHttpJsonRequest(serviceName, method, payload, requestId)
         .catch(error => {
           if (this.pendingRequests.has(requestId)) {
             this.pendingRequests.get(requestId)?.reject(error);
@@ -213,30 +157,33 @@ export class ServiceClient {
     });
   }
   
-  private async sendHttpBinaryRequest(serviceName: string, method: string, message: Uint8Array, requestId: string): Promise<void> {
+  private async sendHttpJsonRequest(serviceName: string, method: string, payload: any, requestId: string): Promise<void> {
     const serviceConfig = this.serviceConfigs.get(serviceName)!;
     
     try {
-      // Fixed URL path to match the Go service expectations
       const response = await fetch(`${serviceConfig.url}/user/${method}`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/octet-stream',
+          'Content-Type': 'application/json',
           'X-Request-ID': requestId,
-          'Content-Length': message.length.toString() // Add explicit content length
         },
-        body: message,
-        // Make sure the entire message is sent as a single chunk
-        duplex: 'half'
+        body: JSON.stringify(payload)
       });
       
       if (!response.ok) {
-        throw new Error(`HTTP error: ${response.status} ${await response.text()}`);
+        let errorText = await response.text();
+        try {
+          // Try to parse error as JSON
+          const errorJson = JSON.parse(errorText);
+          throw new Error(errorJson.message || `HTTP error: ${response.status}`);
+        } catch (parseError) {
+          throw new Error(`HTTP error: ${response.status} ${errorText}`);
+        }
       }
       
-      // Read the binary response
-      const responseBuffer = await response.arrayBuffer();
-      this.handleBinaryResponse(new Uint8Array(responseBuffer), requestId, serviceName);
+      // Handle the response
+      const responseData = await response.json();
+      this.handleResponse(responseData, requestId, serviceName);
     } catch (error) {
       if (this.pendingRequests.has(requestId)) {
         const pendingRequest = this.pendingRequests.get(requestId)!;
@@ -249,88 +196,25 @@ export class ServiceClient {
     }
   }
   
-  private handleBinaryResponse(response: Uint8Array, expectedRequestId: string, serviceName: string): void {
-    try {
-      // Check magic bytes
-      if (response[0] !== this.MAGIC_BYTES[0] || response[1] !== this.MAGIC_BYTES[1]) {
-        throw new Error('Invalid response format: incorrect magic bytes');
-      }
+  private handleResponse(response: any, requestId: string, serviceName: string): void {
+    // Resolve the pending request
+    if (this.pendingRequests.has(requestId)) {
+      const pendingRequest = this.pendingRequests.get(requestId)!;
+      clearTimeout(pendingRequest.timer);
       
-      // Check protocol version
-      if (response[2] !== this.PROTOCOL_VERSION) {
-        throw new Error(`Protocol version mismatch: expected ${this.PROTOCOL_VERSION}, got ${response[2]}`);
-      }
+      // Update metrics
+      const endTime = performance.now();
+      const latency = endTime - pendingRequest.startTime;
+      const metrics = this.metrics.get(serviceName)!;
       
-      // Extract request ID
-      const requestIdBytes = response.slice(3, 19);
-      const requestId = this.bytesToUuid(requestIdBytes);
+      metrics.successfulRequests++;
+      metrics.totalLatency += latency;
+      metrics.maxLatency = Math.max(metrics.maxLatency, latency);
+      metrics.minLatency = Math.min(metrics.minLatency, latency);
       
-      // Verify request ID matches
-      if (requestId !== expectedRequestId) {
-        throw new Error('Response request ID does not match');
-      }
-      
-      // Extract content length
-      const contentLength = new DataView(response.buffer).getUint32(19, true);
-      
-      // Extract content
-      const content = response.slice(23, 23 + contentLength);
-      const jsonContent = new TextDecoder().decode(content);
-      
-      // Resolve the pending request
-      if (this.pendingRequests.has(requestId)) {
-        const pendingRequest = this.pendingRequests.get(requestId)!;
-        clearTimeout(pendingRequest.timer);
-        
-        // Update metrics
-        const endTime = performance.now();
-        const latency = endTime - pendingRequest.startTime;
-        const metrics = this.metrics.get(serviceName)!;
-        
-        metrics.successfulRequests++;
-        metrics.totalLatency += latency;
-        metrics.maxLatency = Math.max(metrics.maxLatency, latency);
-        metrics.minLatency = Math.min(metrics.minLatency, latency);
-        
-        try {
-          const responseData = JSON.parse(jsonContent);
-          pendingRequest.resolve(responseData);
-        } catch (error) {
-          pendingRequest.reject(new Error('Invalid JSON response'));
-        }
-        
-        this.pendingRequests.delete(requestId);
-      }
-    } catch (error) {
-      console.error('Error handling binary response:', error);
-      // If there's an error and we can't match to a specific request,
-      // we can't do much but log it
+      pendingRequest.resolve(response);
+      this.pendingRequests.delete(requestId);
     }
-  }
-
-  private uuidToBytes(uuid: string): Uint8Array {
-    const bytes = new Uint8Array(16);
-    const parts = uuid.replace(/-/g, '').match(/.{2}/g) || [];
-    
-    for (let i = 0; i < 16; i++) {
-      bytes[i] = parseInt(parts[i], 16);
-    }
-    
-    return bytes;
-  }
-  
-  private bytesToUuid(bytes: Uint8Array): string {
-    const hex = Array.from(bytes)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-    
-    return [
-      hex.slice(0, 8),
-      hex.slice(8, 12),
-      hex.slice(12, 16),
-      hex.slice(16, 20),
-      hex.slice(20)
-    ].join('-');
   }
 
   // Add or update a service configuration

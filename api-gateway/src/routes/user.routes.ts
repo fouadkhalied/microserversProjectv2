@@ -32,7 +32,7 @@ export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceC
           
   
           // Send the parsed data to a service using NATS (a message broker) for registration
-          client.sendBinaryRequest('user-service', 'register', userData)
+          client.sendRequest('user-service', 'register', userData)
             .then(response => {
               res.cork(() => {
                 res.writeStatus('201 Created')
@@ -72,7 +72,7 @@ export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceC
           const userData = JSON.parse(buffer);
           console.log(userData);
           
-          client.sendBinaryRequest('user-service', 'login', userData)
+          client.sendRequest('user-service', 'login', userData)
             .then(response => {
               res.writeStatus('200 OK')
                 .writeHeader('Content-Type', 'application/json')
