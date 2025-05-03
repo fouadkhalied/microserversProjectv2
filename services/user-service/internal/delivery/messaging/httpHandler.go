@@ -4,6 +4,7 @@ package messaging
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,16 @@ import (
 )
 
 const (
+	// Binary protocol constants
+	magicByte1      = 0x55 // 'U'
+	magicByte2      = 0x57 // 'W'
+	protocolVersion = 0x01 // Version 1
+	headerSize      = 2    // Magic bytes
+	versionSize     = 1    // Protocol version
+	uuidSize        = 16   // Request ID
+	methodLenSize   = 1    // Method name length
+	contentLenSize  = 4    // Content length
+	
 	// Performance settings
 	maxConcurrentRequests = 10000
 	handlerTimeout        = 5 * time.Second
@@ -27,7 +38,7 @@ const (
 	rateLimitBurst        = 1000 // Burst capacity
 )
 
-// Handler manages HTTP JSON message processing
+// Handler manages binary message processing
 type Handler struct {
 	userUC         *usecase.UserUsecase
 	msgPool        sync.Pool // Message object pool for reduced allocations
@@ -46,15 +57,7 @@ type Metrics struct {
 	startTime          time.Time
 }
 
-// Response represents a standard API response format
-type Response struct {
-	Status  string      `json:"status"`
-	Message string      `json:"message,omitempty"`
-	Code    int         `json:"code,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
-// NewHandler creates a new HTTP JSON message handler
+// NewHandler creates a new binary message handler
 func NewHandler(userUC *usecase.UserUsecase) *Handler {
 	return &Handler{
 		userUC: userUC,
@@ -92,18 +95,18 @@ func (h *Handler) GetMetrics() map[string]interface{} {
 	}
 }
 
-// ServeHTTP handles HTTP requests with JSON data
+// ServeHTTP handles HTTP requests with binary data
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Apply rate limiting
 	if !h.limiter.Allow() {
-		h.sendJSONError(w, "Too many requests", http.StatusTooManyRequests)
+		http.Error(w, "Too many requests", http.StatusTooManyRequests)
 		return
 	}
 
 	// Increment active request counter
 	if atomic.AddInt32(&h.activeRequests, 1) > maxConcurrentRequests {
 		atomic.AddInt32(&h.activeRequests, -1) // Decrement counter
-		h.sendJSONError(w, "Server overloaded", http.StatusServiceUnavailable)
+		http.Error(w, "Server overloaded", http.StatusServiceUnavailable)
 		return
 	}
 	defer atomic.AddInt32(&h.activeRequests, -1)
@@ -121,33 +124,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Get method from URL path
 	method := mux.Vars(r)["method"]
 	if method == "" {
-		h.sendJSONError(w, "Method not specified", http.StatusBadRequest)
+		h.sendError(w, "Method not specified", http.StatusBadRequest, nil)
 		atomic.AddUint64(&h.metrics.failedRequests, 1)
 		return
 	}
 
-	// Extract request ID from header for tracking
-	requestID := r.Header.Get("X-Request-ID")
-	if requestID == "" {
-		requestID = "unknown" // Fallback if client doesn't provide ID
-	}
-
-	// Read the JSON request body
-	log.Printf("Reading JSON request for method: %s, requestID: %s", method, requestID)
-	body, err := io.ReadAll(r.Body)
+	// Read the binary request
+	log.Printf("Reading binary request for method: %s", method)
+	data, err := h.readBinaryRequest(r)
 	if err != nil {
-		log.Printf("Error reading request body: %v", err)
-		h.sendJSONError(w, fmt.Sprintf("Error reading request: %v", err), http.StatusBadRequest)
+		log.Printf("Error reading request: %v", err)
+		h.sendError(w, err.Error(), http.StatusBadRequest, nil)
 		atomic.AddUint64(&h.metrics.failedRequests, 1)
 		return
 	}
-	defer r.Body.Close()
 
-	// Process the message
-	result, err := h.handleJSONMessage(ctx, body, method)
+	// Process the binary message
+	requestID, response, err := h.handleBinaryMessage(ctx, data, method)
 	if err != nil {
 		log.Printf("Error handling message: %v", err)
-		h.sendJSONError(w, err.Error(), http.StatusInternalServerError)
+		h.sendError(w, err.Error(), http.StatusInternalServerError, requestID)
 		atomic.AddUint64(&h.metrics.failedRequests, 1)
 		return
 	}
@@ -158,60 +154,161 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.metrics.totalLatency += time.Since(startTime)
 	h.metrics.mutex.Unlock()
 
-	// Send JSON response
-	h.sendJSONResponse(w, result, http.StatusOK)
+	// Send response
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Write(response)
 }
 
-// sendJSONError sends a standardized error response in JSON format
-func (h *Handler) sendJSONError(w http.ResponseWriter, errMsg string, statusCode int) {
-	response := Response{
-		Status:  "error",
-		Message: errMsg,
-		Code:    statusCode,
+func (h *Handler) readBinaryRequest(r *http.Request) ([]byte, error) {
+	// Fixed: Properly read the entire request body
+	if r.Body == nil {
+		return nil, fmt.Errorf("request body is nil")
 	}
-	
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(response)
-}
 
-// sendJSONResponse sends a standardized success response in JSON format
-func (h *Handler) sendJSONResponse(w http.ResponseWriter, data interface{}, statusCode int) {
-	response := Response{
-		Status: "success",
-		Data:   data,
-		Code:   statusCode,
+	// Use io.ReadAll to properly read all data until EOF
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading request body: %v", err)
 	}
-	
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(response)
-}
+	defer r.Body.Close()
 
-// handleJSONMessage processes a JSON message based on the method
-func (h *Handler) handleJSONMessage(ctx context.Context, data []byte, methodName string) (interface{}, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty request body")
 	}
+
+	// Log the size of the received data for debugging
+	log.Printf("Received %d bytes of binary data", len(data))
+	
+	return data, nil
+}
+
+func (h *Handler) sendError(w http.ResponseWriter, errMsg string, statusCode int, requestID []byte) {
+	// Check if the requestID is valid, if not use an empty one
+	if requestID == nil {
+		requestID = make([]byte, uuidSize)
+	}
+	
+	errorData := map[string]interface{}{
+		"status":  "error",
+		"message": errMsg,
+		"code":    statusCode,
+	}
+	
+	jsonData, _ := json.Marshal(errorData)
+
+	response := h.createBinaryResponse(requestID, jsonData)
+	
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(statusCode)
+	w.Write(response)
+}
+
+func (h *Handler) createBinaryResponse(requestID []byte, jsonData []byte) []byte {
+	responseLen := headerSize + versionSize + uuidSize + contentLenSize + len(jsonData)
+	response := make([]byte, responseLen)
+
+	// Add magic bytes
+	response[0] = magicByte1
+	response[1] = magicByte2
+	
+	// Add protocol version
+	response[2] = protocolVersion
+
+	// Add request ID
+	copy(response[headerSize+versionSize:], requestID)
+
+	// Add content length
+	binary.LittleEndian.PutUint32(response[headerSize+versionSize+uuidSize:], uint32(len(jsonData)))
+
+	// Add content
+	copy(response[headerSize+versionSize+uuidSize+contentLenSize:], jsonData)
+
+	return response
+}
+
+// handleBinaryMessage processes a binary message
+func (h *Handler) handleBinaryMessage(ctx context.Context, data []byte, methodName string) ([]byte, []byte, error) {
+	// Check minimum message size
+	minSize := headerSize + versionSize + uuidSize + methodLenSize
+	if len(data) < minSize {
+		return nil, nil, fmt.Errorf("message too short: got %d bytes, expected at least %d bytes", len(data), minSize)
+	}
+
+	// Verify magic bytes
+	if data[0] != magicByte1 || data[1] != magicByte2 {
+		return nil, nil, fmt.Errorf("invalid magic bytes: expected [%x, %x], got [%x, %x]", 
+			magicByte1, magicByte2, data[0], data[1])
+	}
+	
+	// Verify protocol version
+	if data[2] != protocolVersion {
+		return nil, nil, fmt.Errorf("unsupported protocol version: %d", data[2])
+	}
+
+	// Extract request ID
+	offset := headerSize + versionSize
+	requestID := data[offset : offset+uuidSize]
+	offset += uuidSize
+
+	// Extract method length
+	methodLen := int(data[offset])
+	offset += methodLenSize
+
+	// Check if message has enough bytes for method
+	if len(data) < offset+methodLen {
+		return requestID, nil, fmt.Errorf("invalid method length: message too short")
+	}
+	
+	// Extract method name from the message (for verification)
+	method := string(data[offset : offset+methodLen])
+	offset += methodLen
+	
+	// Verify method name matches URL path parameter
+	if method != methodName {
+		return requestID, nil, fmt.Errorf("method mismatch: got %s, expected %s", method, methodName)
+	}
+
+	// Extract content length
+	if len(data) < offset+contentLenSize {
+		return requestID, nil, fmt.Errorf("message too short for content length")
+	}
+	contentLen := binary.LittleEndian.Uint32(data[offset : offset+contentLenSize])
+	offset += contentLenSize
+
+	// Extract content
+	if len(data) < offset+int(contentLen) {
+		return requestID, nil, fmt.Errorf("message too short for content: expected %d more bytes, got %d", 
+			contentLen, len(data)-offset)
+	}
+	content := data[offset : offset+int(contentLen)]
 
 	var result interface{}
 	var err error
 
 	// Handle methods
-	switch methodName {
+	switch method {
 	case "register":
-		result, err = h.handleRegister(ctx, data)
+		result, err = h.handleRegister(ctx, content)
 	case "login":
-		result, err = h.handleLogin(ctx, data)
+		result, err = h.handleLogin(ctx, content)
 	default:
-		return nil, fmt.Errorf("unknown method: %s", methodName)
+		return requestID, nil, fmt.Errorf("unknown method: %s", method)
 	}
 
 	if err != nil {
-		return nil, err
+		return requestID, nil, err
 	}
 
-	return result, nil
+	// Marshal response
+	jsonData, err := json.Marshal(result)
+	if err != nil {
+		return requestID, nil, fmt.Errorf("error marshaling response: %v", err)
+	}
+
+	// Create response with same binary format
+	response := h.createBinaryResponse(requestID, jsonData)
+
+	return requestID, response, nil
 }
 
 // handleRegister processes registration requests
@@ -235,6 +332,7 @@ func (h *Handler) handleRegister(ctx context.Context, content []byte) (interface
 	}
 
 	return map[string]interface{}{
+		"status":  "success",
 		"message": "User registered successfully",
 	}, nil
 }
@@ -260,6 +358,7 @@ func (h *Handler) handleLogin(ctx context.Context, content []byte) (interface{},
 	}
 
 	return map[string]interface{}{
-		"token": token,
+		"status": "success",
+		"token":  token,
 	}, nil
 }

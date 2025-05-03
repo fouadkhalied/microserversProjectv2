@@ -71,13 +71,13 @@ func main() {
 
 	// HTTP Server
 	server := &http.Server{
-		Addr:    "microserversproject.railway.internal:4000",
+		Addr:    ":3001",
 		Handler: r,
 	}
 
 	// Graceful shutdown handling
 	go func() {
-		log.Println("User Service HTTP server listening on http://localhost:4000")
+		log.Println("User Service HTTP server listening on http://localhost:3001")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("Error starting server: %v", err)
 		}
