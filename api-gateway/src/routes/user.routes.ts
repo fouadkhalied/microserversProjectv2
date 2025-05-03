@@ -32,16 +32,20 @@ export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceC
           
   
           // Send the parsed data to a service using NATS (a message broker) for registration
-          client.sendBinaryRequest('user-service', 'user.register', userData)
-            .then(response => { // Handle the response from the service
-              res.writeStatus('201 Created') // Success status code
-                .writeHeader('Content-Type', 'application/json') // Set the content type to JSON
-                .end(JSON.stringify(response)); // Send the response from the service back to the client
+          client.sendBinaryRequest('user-service', 'register', userData)
+            .then(response => {
+              res.cork(() => {
+                res.writeStatus('201 Created')
+                  .writeHeader('Content-Type', 'application/json')
+                  .end(JSON.stringify(response));
+              });
             })
-            .catch(err => { // If the service call fails
+            .catch(err => {
               console.error('Registration error:', err);
-              res.writeStatus('500 Internal Server Error') // Set 500 Internal Server Error status
-                .end(JSON.stringify({ error: 'Failed to register user' })); // Send error message
+              res.cork(() => {
+                res.writeStatus('500 Internal Server Error')
+                  .end(JSON.stringify({ error: 'Failed to register user' }));
+              });
             });
         } catch (err) { // If JSON parsing fails
           console.error('Invalid request body:', err);

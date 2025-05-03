@@ -17,8 +17,7 @@
     "ioredis": "^5.6.1",
     "nats": "^2.18.0",
     "uuid": "^11.1.0",
-    "uWebSockets.js": "uNetworking/uWebSockets.js#v20.30.0",
-    "ws": "^8.18.1"
+    "uWebSockets.js": "uNetworking/uWebSockets.js#v20.30.0"
   },
   "devDependencies": {
     "@types/node": "^20.9.0",
