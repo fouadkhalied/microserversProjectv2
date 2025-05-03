@@ -34,7 +34,7 @@ export class ServiceClient {
   
   constructor() {
     this.serviceConfigs.set('user-service', {
-      url: 'http://localhost:3001',
+      url: 'microserversproject.railway.internal:4000',
       maxConnections: 100,
       timeout: 5000
     });
