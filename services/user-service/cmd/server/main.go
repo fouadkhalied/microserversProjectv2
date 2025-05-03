@@ -71,13 +71,13 @@ func main() {
 
 	// HTTP Server
 	server := &http.Server{
-		Addr:    ":3001",
+		Addr:    ":4000",
 		Handler: r,
 	}
 
 	// Graceful shutdown handling
 	go func() {
-		log.Println("User Service HTTP server listening on http://localhost:3001")
+		log.Println("User Service HTTP server listening on http://localhost:4000")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("Error starting server: %v", err)
 		}
