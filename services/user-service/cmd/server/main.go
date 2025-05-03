@@ -7,11 +7,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-
-	//"user-service/internal/config"
 	"time"
+
 	"user-service/internal/delivery/messaging"
-	"user-service/internal/delivery/nats"
 	"user-service/internal/infastructure"
 	"user-service/internal/repository"
 	"user-service/internal/usecase"
@@ -22,9 +20,6 @@ import (
 )
 
 func main() {
-	// Load configuration
-	//cfg := config.Load()
-
 	// Create a context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -51,19 +46,13 @@ func main() {
 	// Configure Redis with connection pooling
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:         "localhost:6379",
-		PoolSize:     10, // Set pool size
-		MinIdleConns: 5,  // Keep minimum connections open
+		PoolSize:     10,
+		MinIdleConns: 5,
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
 	})
 	defer redisClient.Close()
-
-	// NATS connection
-	natsConn, err := nats.ConnectNats()
-	if err != nil {
-		log.Fatalf("❌ Failed to connect to NATS: %v", err)
-	}
 
 	// Setup services
 	userRepo := repository.NewUserRepo(pgPool)
@@ -71,15 +60,16 @@ func main() {
 	jwtService := infastructure.NewJWTService()
 	userUsecase := usecase.NewUserUsecase(userRepo, redisRepo, jwtService)
 
-	// WebSocket handler
-	wsHandler := messaging.NewHandler(userUsecase)
+	// Create binary message handler
+	binaryHandler := messaging.NewHandler(userUsecase)
 
-	// Router with WebSocket only
+	// Router setup
 	r := mux.NewRouter()
-	r.HandleFunc("/ws", wsHandler.ServeHTTP) // WebSocket endpoint for all user operations
-	
 
-	//HTTP Server
+	// Binary message handlers for user service
+	r.HandleFunc("/user/{method}", binaryHandler.ServeHTTP).Methods("POST")
+
+	// HTTP Server
 	server := &http.Server{
 		Addr:    ":3001",
 		Handler: r,
@@ -87,7 +77,7 @@ func main() {
 
 	// Graceful shutdown handling
 	go func() {
-		log.Println("User Service WebSocket server listening on ws://localhost:3001/ws")
+		log.Println("User Service HTTP server listening on http://localhost:3001")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("Error starting server: %v", err)
 		}
@@ -108,16 +98,6 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Error shutting down server: %v", err)
 	}
-
-	// Closing connections gracefully
-	natsConn.Close()
-	log.Println("Closed NATS connection")
-
-	redisClient.Close()
-	log.Println("Closed Redis connection")
-
-	pgPool.Close()
-	log.Println("Closed PostgreSQL connection")
 
 	log.Println("Service shutdown complete")
 }
