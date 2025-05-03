@@ -71,7 +71,7 @@ func main() {
 
 	// HTTP Server
 	server := &http.Server{
-		Addr:    ":4000",
+		Addr:    "microserversproject.railway.internal:4000",
 		Handler: r,
 	}
 
