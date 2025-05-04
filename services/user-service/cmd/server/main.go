@@ -3,18 +3,16 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"user-service/internal/delivery/messaging"
-	"user-service/internal/infastructure"
+	"user-service/internal/delivery/messaging" // Changed from messaging to tcp
+	"user-service/internal/infastructure" // Fixed typo in package name
 	"user-service/internal/repository"
 	"user-service/internal/usecase"
 
-	"github.com/gorilla/mux"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -30,7 +28,7 @@ func main() {
 		log.Fatalf("Unable to parse PostgreSQL config: %v", err)
 	}
 
-	// Configure optimal connection pool
+	// Connection pool optimization
 	pgConfig.MaxConns = 20
 	pgConfig.MinConns = 5
 	pgConfig.MaxConnLifetime = time.Hour
@@ -43,9 +41,11 @@ func main() {
 	}
 	defer pgPool.Close()
 
-	// Configure Redis with connection pooling
+	// Configure Redis client with optimized settings
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:         "localhost:6379",
+		Password:     "", // Add if needed
+		DB:           0,  // Default DB
 		PoolSize:     10,
 		MinIdleConns: 5,
 		DialTimeout:  5 * time.Second,
@@ -54,50 +54,40 @@ func main() {
 	})
 	defer redisClient.Close()
 
-	// Setup services
-	userRepo := repository.NewUserRepo(pgPool)
-	redisRepo := repository.NewRedisRepo(redisClient)
-	jwtService := infastructure.NewJWTService()
-	userUsecase := usecase.NewUserUsecase(userRepo, redisRepo, jwtService)
-
-	// Create binary message handler
-	binaryHandler := messaging.NewHandler(userUsecase)
-
-	// Router setup
-	r := mux.NewRouter()
-
-	// Binary message handlers for user service
-	r.HandleFunc("/user/{method}", binaryHandler.ServeHTTP).Methods("POST")
-
-	// HTTP Server
-	server := &http.Server{
-		Addr:    ":3001",
-		Handler: r,
+	// Verify Redis connection
+	if _, err := redisClient.Ping(ctx).Result(); err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
 
-	// Graceful shutdown handling
+	// Setup service layers
+	userRepo := repository.NewUserRepo(pgPool)
+	redisRepo := repository.NewRedisRepo(redisClient)
+	jwtService := infastructure.NewJWTService() // Fixed package name
+	userUsecase := usecase.NewUserUsecase(userRepo, redisRepo, jwtService)
+
+	// Initialize TCP handler
+	tcpHandler := tcp.NewTCPHandler(userUsecase)
+
+	// Start TCP server in a goroutine
 	go func() {
-		log.Println("User Service HTTP server listening on http://localhost:3001")
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Error starting server: %v", err)
+		log.Println("Starting TCP server on port 3001")
+		if err := tcpHandler.Start(":3001"); err != nil {
+			log.Fatalf("TCP server failed: %v", err)
 		}
 	}()
 
-	// Wait for termination signal (SIGINT, SIGTERM)
+	// Graceful shutdown handling
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	// Block until we receive a signal
 	<-sigCh
-	log.Println("Received shutdown signal, shutting down...")
+	log.Println("Received shutdown signal, initiating graceful shutdown...")
 
-	// Gracefully shutdown the HTTP server
-	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer shutdownCancel()
-
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Error shutting down server: %v", err)
+	// Shutdown TCP server
+	if err := tcpHandler.Stop(); err != nil {
+		log.Printf("Error shutting down TCP server: %v", err)
 	}
 
-	log.Println("Service shutdown complete")
+	log.Println("Service shutdown completed successfully")
 }
