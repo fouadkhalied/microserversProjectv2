@@ -17,4 +17,10 @@ const (
 		SET tokens = array_append(tokens, $2)
 		WHERE id = $1
 	`
+
+	getProfile = `
+		SELECT id, username, email
+		FROM users
+		WHERE id= $1
+	`
 )

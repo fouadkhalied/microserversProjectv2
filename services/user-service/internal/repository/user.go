@@ -41,3 +41,15 @@ func (r *UserRepo) UpdateTokens(ctx context.Context, userID string, token string
     return err
 }
 
+func (r *UserRepo) GetProfile(ctx context.Context, userID string) (*domain.User, error) {
+    var user domain.User
+    row := r.db.QueryRow(ctx, getProfile, userID)
+
+    err := row.Scan(&user.ID, &user.Username, &user.Email)
+    if err != nil {
+        return nil, err
+    }
+
+    
+    return &user, nil
+}

@@ -7,23 +7,27 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-
-	"user-service/internal/delivery/messaging" // Changed from messaging to tcp
-	"user-service/internal/infastructure" // Fixed typo in package name
+	"path/filepath"
+	"user-service/internal/delivery/messaging" 
+	"user-service/internal/infrastructure" 
 	"user-service/internal/repository"
 	"user-service/internal/usecase"
-
+	"github.com/joho/godotenv"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
 func main() {
+	// Load env variables 
+	if envErr := godotenv.Load(filepath.Join("..", "..", ".env")); envErr != nil {
+        log.Println("No .env file found or error loading .env")
+    }
 	// Create a context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// PostgreSQL connection with optimized pool settings
-	pgConfig, err := pgxpool.ParseConfig("postgresql://postgres:pfYtJzUVVcksnbRPNwoMUMeAbluqMqgJ@centerbeam.proxy.rlwy.net:44785/railway")
+	pgConfig, err := pgxpool.ParseConfig(os.Getenv("PostgreSQL"))
 	if err != nil {
 		log.Fatalf("Unable to parse PostgreSQL config: %v", err)
 	}
@@ -62,8 +66,9 @@ func main() {
 	// Setup service layers
 	userRepo := repository.NewUserRepo(pgPool)
 	redisRepo := repository.NewRedisRepo(redisClient)
-	jwtService := infastructure.NewJWTService() // Fixed package name
-	userUsecase := usecase.NewUserUsecase(userRepo, redisRepo, jwtService)
+	jwtService := infrastructure.NewJWTService() 
+	otpService := infrastructure.NewOTPService()
+	userUsecase := usecase.NewUserUsecase(userRepo, redisRepo, jwtService, otpService)
 
 	// Initialize TCP handler
 	tcpHandler := tcp.NewTCPHandler(userUsecase)

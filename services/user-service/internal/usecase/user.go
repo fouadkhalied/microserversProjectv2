@@ -6,7 +6,7 @@ import (
     "log"
     "time"
     "user-service/internal/domain"
-    "user-service/internal/infastructure"
+    "user-service/internal/infrastructure"
     "user-service/internal/repository"
     "golang.org/x/crypto/bcrypt"
 )
@@ -14,28 +14,25 @@ import (
 type UserUsecase struct {
     userRepo   *repository.UserRepo
     redisRepo  *repository.RedisRepo
-    jwtService *infastructure.JWTService
-    // Added cache to avoid frequent database lookups
+    jwtService *infrastructure.JWTService
+    otpService *infrastructure.OTPService
     userCache  map[string]*domain.User
     cacheTTL   time.Duration
 }
 
-func NewUserUsecase(userRepo *repository.UserRepo, redisRepo *repository.RedisRepo, jwtService *infastructure.JWTService) *UserUsecase {
+func NewUserUsecase(userRepo *repository.UserRepo, redisRepo *repository.RedisRepo, jwtService *infrastructure.JWTService, otpService *infrastructure.OTPService) *UserUsecase {
     return &UserUsecase{
         userRepo:   userRepo,
         redisRepo:  redisRepo,
         jwtService: jwtService,
+        otpService: otpService,
         userCache:  make(map[string]*domain.User),
         cacheTTL:   5 * time.Minute, // Cache users for 5 minutes
     }
 }
 
-
 func (uc *UserUsecase) RegisterUser(ctx context.Context, user *domain.User) error {
     
-    // Use a lower cost factor for bcrypt during registration
-    // This significantly reduces CPU time while maintaining decent security
-    // DefaultCost is 10, we can use 8 for faster performance
     hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), 8)
     if err != nil {
         return err
@@ -136,4 +133,47 @@ func (uc *UserUsecase) LoginUser(ctx context.Context, username, password string)
     case <-ctx.Done():
         return "", ctx.Err()
     }
+}
+
+
+func (uc *UserUsecase) GetProfile(ctx context.Context, userID string) (*domain.User, error) {
+    // First, try to get the profile from Redis cache
+    cachedUser, err := uc.redisRepo.GetProfile(ctx, userID)
+    if err == nil && cachedUser != nil {
+        // Cache hit, return the cached profile (exclude password)
+        cachedUser.Password = ""
+        return cachedUser, nil
+    }
+
+    // If not in cache, get it from the database
+    user, err := uc.userRepo.GetProfile(ctx, userID)
+    if err != nil {
+        return nil, err
+    }
+
+    // Cache the user profile in Redis for future access, with TTL
+    err = uc.redisRepo.SetProfile(ctx, userID, user, 24*time.Hour) // Cache for 24 hours
+    if err != nil {
+        log.Printf("Failed to cache user profile: %v", err)
+    }
+    return user, nil
+}
+
+func (uc *UserUsecase) SendOTPtoUser(ctx context.Context, email string) (bool, error) {
+    // Check if OTP already exists in cache and hasn't expired
+    otp, err := uc.redisRepo.GetOTP(ctx, email)
+    if err != nil {
+        return false, err // Redis error
+    }
+
+    if otp != "" {
+        return true, nil // OTP still valid; no need to resend
+    }
+
+    // Generate and send new OTP
+    if err := uc.otpService.SendOTP(email); err != nil {
+        return false, err // Failed to send OTP
+    }
+
+    return true, nil // OTP sent successfully
 }
