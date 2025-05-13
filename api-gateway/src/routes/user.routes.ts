@@ -1,6 +1,7 @@
 import { HttpRequest, HttpResponse } from 'uWebSockets.js';
 import uWS from 'uWebSockets.js';
 import { ServiceClient } from '../services/server-client';
+import withAuth from '../utils/withAuth';
 
 export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceClient) {
   // Health check route
@@ -10,6 +11,7 @@ export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceC
       .end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
   });
 
+  // User register
   app.post('/api/users/register', (res, req) => {
     let buffer = ''; // This variable will store the incoming request body
     res.onData((chunk, isLast) => { // `onData` event handler processes chunks of data from the client
@@ -31,8 +33,8 @@ export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceC
           console.log(userData);
           
   
-          // Send the parsed data to a service using NATS (a message broker) for registration
-          client.sendBinaryRequest('user-service', 'register', userData)
+          // Send the parsed data to a service using TCP for registration
+          client.sendBinaryRequest('user-service', 'verify', {email : userData.email})
             .then(response => {
               res.cork(() => {
                 res.writeStatus('201 Created')
@@ -62,7 +64,7 @@ export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceC
   });
   
 
-  // Example: User login
+  // User login
   app.post('/api/users/login', (res, req) => {
     let buffer = '';
     res.onData((chunk, isLast) => {
@@ -95,4 +97,29 @@ export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceC
       console.log('Client aborted login request');
     });
   });
+
+  // get user profile
+  app.get('/api/users/profile', withAuth((res, req, user) => {
+     try {
+      client.sendBinaryRequest('user-service','profile',{userID : user.user_id}).then(response => {
+        res.writeStatus('200 OK')
+          .writeHeader('Content-Type', 'application/json')
+          .end(JSON.stringify(response));
+      })
+      .catch(err => {
+        console.error('Login error:', err);
+        res.writeStatus('401 Unauthorized')
+          .end(JSON.stringify({ error: 'Authentication failed' }));
+      });
+     } catch (error) {
+      console.error('Invalid request body:', error);
+          res.writeStatus('400 Bad Request')
+            .end(JSON.stringify({ error: 'Invalid JSON format' }));
+     }
+
+     res.onAborted(() => {
+      console.log('Client aborted login request');
+    });
+  }));
+  
 }

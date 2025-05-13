@@ -5,16 +5,18 @@
   "main": "dist/server.js",
   "scripts": {
     "start": "tsc && node dist/server.js",
-    "dev": "ts-node src/server.js",
+    "dev": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
     "build": "tsc"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.13.3",
     "@grpc/proto-loader": "^0.7.15",
+    "@types/jsonwebtoken": "^9.0.9",
     "@types/ws": "^8.18.1",
     "axios": "^1.6.2",
     "dotenv": "^16.5.0",
     "ioredis": "^5.6.1",
+    "jsonwebtoken": "^9.0.2",
     "nats": "^2.18.0",
     "uuid": "^11.1.0",
     "uWebSockets.js": "uNetworking/uWebSockets.js#v20.30.0"
