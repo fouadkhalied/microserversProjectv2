@@ -23,9 +23,14 @@ func (h *TCPHandler) handleRegister(ctx context.Context, content []byte) (interf
 		return nil, fmt.Errorf("username and password are required")
 	}
 
-	if err := h.userUC.RegisterUser(ctx, user); err != nil {
+	// if err := h.userUC.RegisterUser(ctx, user); err != nil {
+	// 	return nil, fmt.Errorf("registration failed: %v", err)
+	// }
+
+	if err := h.userUC.SendOTPtoUser(ctx, user); err != nil {
 		return nil, fmt.Errorf("registration failed: %v", err)
 	}
+
 
 	// Use a struct instead of map for better performance
 	return struct {
@@ -92,19 +97,20 @@ func (h *TCPHandler) handleProfile(ctx context.Context, content []byte) (interfa
 
 }
 
-func (h *TCPHandler) handleEmailOTP(ctx context.Context, content []byte) (interface{},error)  {
+func (h *TCPHandler) handleEmailOTP(ctx context.Context, content []byte) (interface{},error) {
 	var credentials struct {
 		Email string `json:"email"`
+		OTP string `json:"otp"`
 	}
 
 	if err := json.Unmarshal(content,&credentials); err != nil {
 		return nil, fmt.Errorf("invalid input data: %v", err)
 	}
 
-	user , err := h.userUC.SendOTPtoUser(ctx,credentials.Email); 
+	err := h.userUC.VerifyOtp(ctx,credentials.Email,credentials.OTP); 
 	
 	if err != nil {
-		return nil, fmt.Errorf("error in sending otp : %v", err)
+		return nil, fmt.Errorf("error in verifying otp : %v", err)
 	}
 
 	return struct {
@@ -112,6 +118,6 @@ func (h *TCPHandler) handleEmailOTP(ctx context.Context, content []byte) (interf
 		User  bool `json:"user"`
 	}{
 		Status: "success",
-		User:  user,
+		User:  true,
 	}, nil
 }

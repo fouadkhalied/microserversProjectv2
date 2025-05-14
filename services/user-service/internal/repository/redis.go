@@ -6,6 +6,7 @@ import (
     "github.com/redis/go-redis/v9"
     "user-service/internal/domain"
     "encoding/json"
+    "fmt"
 )
 
 type RedisRepo struct {
@@ -60,7 +61,7 @@ func (r *RedisRepo) GetProfile(ctx context.Context, userID string) (*domain.User
 
 // SetOTP stores the OTP for a given email with expiration
 func (r *RedisRepo) SetOTP(ctx context.Context, email string, otp string, expiration time.Duration) error {
-	
+    fmt.Errorf("invalid input data: %v", email)
 	return r.client.Set(ctx, "otp:"+email, otp, expiration).Err()
 }
 
@@ -75,4 +76,33 @@ func (r *RedisRepo) GetOTP(ctx context.Context, email string) (string, error) {
 	}
 	
 	return data, nil
+}
+
+// set user data for a given otp
+func (r * RedisRepo) SetUserData(ctx context.Context, email string, user * domain.User, expiration time.Duration) error {
+    data, err := json.Marshal(user)
+    if err != nil {
+        return err
+    }
+    return r.client.Set(ctx,"user:"+email,data,expiration).Err()
+}
+
+// get user data after bieng verified
+func (r *RedisRepo) GetUserData(ctx context.Context, email string) (*domain.User, error) {
+	var user domain.User
+    data, err := r.client.Get(ctx, "user:"+email).Result()
+    if err != nil {
+        if err == redis.Nil {
+            return nil, nil // No profile found in cache
+        }
+        return nil, err // Return error if there's a different issue
+    }
+
+    // Deserialize the user data from JSON
+    err = json.Unmarshal([]byte(data), &user)
+    if err != nil {
+        return nil, err
+    }
+
+    return &user, nil
 }

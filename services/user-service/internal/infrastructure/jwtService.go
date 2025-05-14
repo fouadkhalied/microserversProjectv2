@@ -1,7 +1,7 @@
 package infrastructure
 
 import (
-    "log"
+    //"log"
     "time"
     "os"
     "github.com/golang-jwt/jwt/v5"
@@ -24,6 +24,6 @@ func (j *JWTService) GenerateToken(userID string) (string, error) {
     }
 
     token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-    log.Println(j.secretKey)
-    return token.SignedString([]byte("fouad"))
+    //log.Println(j.secretKey)
+    return token.SignedString([]byte(os.Getenv("JWTSECRETKEY")))
 }

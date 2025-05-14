@@ -6,10 +6,10 @@ import (
     "user-service/internal/repository"
     "time"
     "context"
-    "net/http"
-    "io/ioutil"
-    "encoding/json"
-    "bytes"
+    "github.com/sendgrid/sendgrid-go"
+	"github.com/sendgrid/sendgrid-go/helpers/mail"
+	"os"
+	"log"
 )
 
 type OTPService struct {
@@ -22,83 +22,49 @@ type OTPService struct {
 
 func NewOTPService() *OTPService {
     return &OTPService{
-        EMAIL_API_KEY: "0fe7f9bc96f9a92a9ed8a1e95de20eeb",
-        EMAIL_SENDER: "no-reply@github.com",
+        EMAIL_API_KEY: os.Getenv("EMAIL_API_KEY"),
+        EMAIL_SENDER: os.Getenv("EMAIL_SENDER"),
     }
 }
+
 // Exported function
-func (o *OTPService) SendOTP(recipientEmail string) error {
-	otp := o.generateOTP()
+func (o *OTPService) SendOTP(ctx context.Context,recipientEmail string, otp string) error {
+	from := mail.NewEmail("Real state", "foukha49@gmail.com")
+	subject := "Your OTP Code"
+	to := mail.NewEmail("", recipientEmail)
 
-	payload := map[string]interface{}{
-		"from": map[string]string{
-			"email": "hello@example.com",
-			"name":  "Mailtrap Test",
-		},
-		"to": []map[string]string{
-			{
-				"email": recipientEmail,
-			},
-		},
-		"subject":  "Your OTP Code",
-		"text":     fmt.Sprintf("Your OTP is: %s", otp),
-		"category": "OTP",
-	}
+	plainTextContent := fmt.Sprintf("Your OTP code is: %s", otp)
+	htmlContent := fmt.Sprintf("<strong>Your OTP code is: %s</strong>", otp)
 
-	jsonPayload, err := json.Marshal(payload)
+	message := mail.NewSingleEmail(from, subject, to, plainTextContent, htmlContent)
+	client := sendgrid.NewSendClient(os.Getenv("EMAIL_API_KEY"))
+	response, err := client.Send(message)
+
 	if err != nil {
-		return fmt.Errorf("error marshalling payload: %w", err)
+		log.Println("Failed to send OTP email:", err)
+		return err
 	}
 
-    fmt.Print(recipientEmail)
-
-	req, err := http.NewRequest("POST", "https://sandbox.api.mailtrap.io/api/send/3692272", bytes.NewBuffer(jsonPayload))
-	if err != nil {
-		return fmt.Errorf("error creating request: %w", err)
-	}
-
-	req.Header.Add("Authorization", "Bearer 0fe7f9bc96f9a92a9ed8a1e95de20eeb")
-	req.Header.Add("Content-Type", "application/json")
-
-	client := &http.Client{}
-	res, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("error sending request: %w", err)
-	}
-	defer res.Body.Close()
-
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return fmt.Errorf("error reading response: %w", err)
-	}
-
-	fmt.Println("Mailtrap response:", string(body))
+	fmt.Println("Email sent. Status Code:", response.StatusCode)
 	return nil
 }
 
-func (o * OTPService) generateOTP() string {
+
+func (o * OTPService) GenerateOTP(ctx context.Context) string {
 	b := make([]byte, 3)
 	rand.Read(b)
 	return fmt.Sprintf("%06d", int(b[0])<<16|int(b[1])<<8|int(b[2])%1000000)
 }
 
-func (r * OTPService) VerifyOTP(ctx context.Context, email, providedOTP string) (bool, error) {
-	storedOTP, err := r.redisRepo.GetOTP(ctx, email)
-	if err != nil {
-		return false, err
-	}
+func (o * OTPService) VerifyOTP(ctx context.Context, email, providedOTP , cacheOtp string) (bool, error) {
 	
-	if storedOTP == "" {
-		return false, nil // OTP not found or expired
-	}
-	
-	isValid := storedOTP == providedOTP
+	isValid := cacheOtp == providedOTP
 	
 	if isValid {
 		// Delete the OTP after successful verification to prevent reuse
-		if err := r.redisRepo.DeleteKey(ctx, "otp:"+email); err != nil {
-			return true, err // OTP was valid but failed to delete
-		}
+		//if err := o.redisRepo.DeleteKey(ctx, "otp:"+email); err != nil {
+			return true, nil // OTP was valid but failed to delete
+		//}
 	}
 	
 	return isValid, nil

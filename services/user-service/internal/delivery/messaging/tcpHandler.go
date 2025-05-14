@@ -516,14 +516,14 @@ func (h *TCPHandler) handleBinaryMessage(ctx context.Context, data []byte) ([]by
 
 	// Handle methods
 	switch method {
-	case "verify":
-		result,err = h.handleEmailOTP(ctx,content)	
 	case "register":
 		result, err = h.handleRegister(ctx, content)
+	case "verify":
+		result, err = h.handleEmailOTP(ctx, content)		
 	case "login":
 		result, err = h.handleLogin(ctx, content)
 	case "profile":
-		result,err = h.handleProfile(ctx,content)
+		result,err = h.handleProfile(ctx,content)	
 	case "ping":
 		// Fast path for ping - no need for map allocation
 		result = struct {

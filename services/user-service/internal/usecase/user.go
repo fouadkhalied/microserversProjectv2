@@ -1,14 +1,14 @@
-
 package usecase
 
 import (
-    "context"
-    "log"
-    "time"
-    "user-service/internal/domain"
-    "user-service/internal/infrastructure"
-    "user-service/internal/repository"
-    "golang.org/x/crypto/bcrypt"
+	"context"
+	"log"
+	"time"
+	"user-service/internal/domain"
+	"user-service/internal/infrastructure"
+	"user-service/internal/repository"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type UserUsecase struct {
@@ -159,21 +159,59 @@ func (uc *UserUsecase) GetProfile(ctx context.Context, userID string) (*domain.U
     return user, nil
 }
 
-func (uc *UserUsecase) SendOTPtoUser(ctx context.Context, email string) (bool, error) {
+func (uc *UserUsecase) SendOTPtoUser(ctx context.Context, user *domain.User) (error) {
     // Check if OTP already exists in cache and hasn't expired
-    otp, err := uc.redisRepo.GetOTP(ctx, email)
+    otp, err := uc.redisRepo.GetOTP(ctx, user.Email)
     if err != nil {
-        return false, err // Redis error
+        return err // Redis error
     }
 
     if otp != "" {
-        return true, nil // OTP still valid; no need to resend
+        return nil // OTP still valid; no need to resend
+    } else {
+        otp = uc.otpService.GenerateOTP(ctx) // generate new otp
+        uc.redisRepo.SetOTP(ctx,"otp:"+user.Email,otp,time.Minute * 1) // set otp in cache
+    } 
+
+    // Send new OTP
+    if err := uc.otpService.SendOTP(ctx,user.Email,otp); err != nil {
+        return err // Failed to send OTP
     }
 
-    // Generate and send new OTP
-    if err := uc.otpService.SendOTP(email); err != nil {
-        return false, err // Failed to send OTP
+    // Store user data with otp in cache
+    uc.redisRepo.SetUserData(ctx,user.Email,user,time.Second * 50)
+
+    return nil // OTP sent successfully
+}
+
+func (uc *UserUsecase) VerifyOtp(ctx context.Context,email, userOtp string) (error) {
+
+    // get otp from cache
+
+    cacheOtp,err := uc.redisRepo.GetOTP(ctx,"otp:"+email)
+
+    if err != nil {
+        log.Printf("Failed to retrive otp from cache : %v", err)
+        return err
+    }
+    log.Printf(email , userOtp , cacheOtp)
+    isValid , err := uc.otpService.VerifyOTP(ctx,email,userOtp,cacheOtp)
+
+    if err != nil {
+        log.Printf("Failed to verify user : %v", err)
+        return err
     }
 
-    return true, nil // OTP sent successfully
+    if isValid {
+        user , err := uc.redisRepo.GetUserData(ctx,email)
+
+        if err != nil {
+            log.Printf("Failed to retrive user from cache : %v", err)
+            return err
+        } 
+
+        log.Print(user)
+        uc.RegisterUser(ctx,user)
+    }
+    return nil
 }

@@ -48,7 +48,7 @@ func main() {
 	// Configure Redis client with optimized settings
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:         os.Getenv("REDIS_URL"),
-		Password:     os.Getenv("REDIS_PASSWORD"), // Add if needed
+		Password:     "", // Add if needed
 		DB:           0,  // Default DB
 		PoolSize:     10,
 		MinIdleConns: 5,
