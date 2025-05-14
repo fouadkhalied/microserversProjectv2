@@ -34,7 +34,59 @@ export function registerRoutes(app: ReturnType<typeof uWS.App>, client: ServiceC
           
   
           // Send the parsed data to a service using TCP for registration
-          client.sendBinaryRequest('user-service', 'verify', {email : userData.email})
+          client.sendBinaryRequest('user-service', 'register', userData)
+            .then(response => {
+              res.cork(() => {
+                res.writeStatus('201 Created')
+                  .writeHeader('Content-Type', 'application/json')
+                  .end(JSON.stringify(response));
+              });
+            })
+            .catch(err => {
+              console.error('Registration error:', err);
+              res.cork(() => {
+                res.writeStatus('500 Internal Server Error')
+                  .end(JSON.stringify({ error: 'Failed to register user' }));
+              });
+            });
+        } catch (err) { // If JSON parsing fails
+          console.error('Invalid request body:', err);
+          res.writeStatus('400 Bad Request') // Set 400 Bad Request status
+            .end(JSON.stringify({ error: 'Invalid JSON format' })); // Send error message for invalid JSON
+        }
+      }
+    });
+  
+    // Handle the case when the client aborts the request
+    res.onAborted(() => {
+      console.log('Client aborted registration request');
+    });
+  });
+
+
+  app.post('/api/users/verify', (res, req) => {
+    let buffer = ''; // This variable will store the incoming request body
+    res.onData((chunk, isLast) => { // `onData` event handler processes chunks of data from the client
+      buffer += Buffer.from(chunk).toString(); // Append the received chunk to the `buffer`
+      
+      // When all data is received (isLast is true)
+      if (isLast) {
+        try {
+          // Parse the buffer content as JSON
+          const userData = JSON.parse(buffer);
+  
+          // Validate user data (e.g., check for missing fields)
+          if (!userData.email || !userData.otp) {
+            res.writeStatus('400 Bad Request') // If validation fails, send 400 status
+              .end(JSON.stringify({ error: 'Email and otp are required' }));
+            return;
+          }
+
+          console.log(userData);
+          
+  
+          // Send the parsed data to a service using TCP for registration
+          client.sendBinaryRequest('user-service', 'verify', userData)
             .then(response => {
               res.cork(() => {
                 res.writeStatus('201 Created')
