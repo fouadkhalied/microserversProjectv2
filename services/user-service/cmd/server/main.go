@@ -68,7 +68,8 @@ func main() {
 	redisRepo := repository.NewRedisRepo(redisClient)
 	jwtService := infrastructure.NewJWTService() 
 	otpService := infrastructure.NewOTPService()
-	userUsecase := usecase.NewUserUsecase(userRepo, redisRepo, jwtService, otpService)
+	otpRateLimiter := infrastructure.NewRateLimiter(15*time.Minute, 5)
+	userUsecase := usecase.NewUserUsecase(userRepo, redisRepo, jwtService, otpService, otpRateLimiter)
 
 	// Initialize TCP handler
 	tcpHandler := tcp.NewTCPHandler(userUsecase)

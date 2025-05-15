@@ -2,12 +2,13 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 	"user-service/internal/domain"
 	"user-service/internal/infrastructure"
 	"user-service/internal/repository"
-
+    "fmt"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -16,16 +17,28 @@ type UserUsecase struct {
     redisRepo  *repository.RedisRepo
     jwtService *infrastructure.JWTService
     otpService *infrastructure.OTPService
+    otpRateLimiter *infrastructure.RateLimiter
     userCache  map[string]*domain.User
     cacheTTL   time.Duration
 }
 
-func NewUserUsecase(userRepo *repository.UserRepo, redisRepo *repository.RedisRepo, jwtService *infrastructure.JWTService, otpService *infrastructure.OTPService) *UserUsecase {
+func NewUserUsecase(userRepo *repository.UserRepo, redisRepo *repository.RedisRepo, jwtService *infrastructure.JWTService, otpService *infrastructure.OTPService, otpRateLimiter *infrastructure.RateLimiter) *UserUsecase {
+    
+    // Start periodic cleanup of stale rate limiter entries
+    go func() {
+        ticker := time.NewTicker(1 * time.Hour)
+        defer ticker.Stop()
+        
+        for range ticker.C {
+            otpRateLimiter.CleanupStaleEntries()
+        }
+    }()
     return &UserUsecase{
         userRepo:   userRepo,
         redisRepo:  redisRepo,
         jwtService: jwtService,
         otpService: otpService,
+        otpRateLimiter: otpRateLimiter,
         userCache:  make(map[string]*domain.User),
         cacheTTL:   5 * time.Minute, // Cache users for 5 minutes
     }
@@ -158,60 +171,114 @@ func (uc *UserUsecase) GetProfile(ctx context.Context, userID string) (*domain.U
     }
     return user, nil
 }
+func (uc *UserUsecase) SendOTPtoUser(ctx context.Context, user *domain.User) error {
+    // Check if user already exists in database
+    existingUser, err := uc.userRepo.FindByCredentials(ctx, user.Username)
+    if err != nil {
+        // Only return unexpected errors, not "user not found" which is expected
+        return fmt.Errorf("error checking existing user: %w", err)
+    }
 
-func (uc *UserUsecase) SendOTPtoUser(ctx context.Context, user *domain.User) (error) {
+    if existingUser != nil {
+        return errors.New("username already exists")
+    }
+    
+    // Apply rate limiting for OTP generation
+    // if !uc.otpRateLimiter.Allow(user.Email) {
+    //     return errors.New("too many OTP requests, please try again later")
+    // }
+
+    // consistent key naming
+    otpKey := "otp:" + user.Email
+    
     // Check if OTP already exists in cache and hasn't expired
-    otp, err := uc.redisRepo.GetOTP(ctx, user.Email)
+    otp, err := uc.redisRepo.GetOTP(ctx, otpKey)
     if err != nil {
-        return err // Redis error
+        return fmt.Errorf("redis error: %w", err)
     }
 
-    if otp != "" {
-        return nil // OTP still valid; no need to resend
-    } else {
-        otp = uc.otpService.GenerateOTP(ctx) // generate new otp
-        uc.redisRepo.SetOTP(ctx,"otp:"+user.Email,otp,time.Minute * 1) // set otp in cache
-    } 
-
-    // Send new OTP
-    if err := uc.otpService.SendOTP(ctx,user.Email,otp); err != nil {
-        return err // Failed to send OTP
+    // Generate new OTP if needed
+    if otp == "" {
+        otp = uc.otpService.GenerateOTP(ctx)
+        
+        // Set OTP in cache with 5-minute expiration
+        if err := uc.redisRepo.SetOTP(ctx, otpKey, otp, 5*time.Minute); err != nil {
+            return fmt.Errorf("failed to cache OTP: %w", err)
+        }
     }
 
-    // Store user data with otp in cache
-    uc.redisRepo.SetUserData(ctx,user.Email,user,time.Second * 50)
+    // Send OTP to user
+    if err := uc.otpService.SendOTP(ctx, user.Email, otp); err != nil {
+        // Clean up the cached OTP if we couldn't send it
+        uc.redisRepo.DeleteKey(ctx, otpKey)
+        return fmt.Errorf("failed to send OTP: %w", err)
+    }
 
-    return nil // OTP sent successfully
+    // Store user data with a longer TTL (15 minutes)
+    if err := uc.redisRepo.SetUserData(ctx, user.Email, user, 15*time.Minute); err != nil {
+        return fmt.Errorf("failed to cache user data: %w", err)
+    }
+
+    return nil
 }
+func (uc *UserUsecase) VerifyOtp(ctx context.Context, email, userOtp string) error {
+    // Apply rate limiting for OTP verification attempts
+    if !uc.otpRateLimiter.Allow("verify:" + email) {
+        return errors.New("too many verification attempts, please try again later")
+    }
 
-func (uc *UserUsecase) VerifyOtp(ctx context.Context,email, userOtp string) (error) {
+    // Use consistent key naming
+    otpKey := "otp:" + email
 
-    // get otp from cache
-
-    cacheOtp,err := uc.redisRepo.GetOTP(ctx,"otp:"+email)
-
+    // Get OTP from cache
+    cacheOtp, err := uc.redisRepo.GetOTP(ctx, otpKey)
     if err != nil {
-        log.Printf("Failed to retrive otp from cache : %v", err)
-        return err
+        return fmt.Errorf("failed to retrieve OTP from cache: %w", err)
     }
-    log.Printf(email , userOtp , cacheOtp)
-    isValid , err := uc.otpService.VerifyOTP(ctx,email,userOtp,cacheOtp)
-
+    
+    // Check if OTP exists
+    if cacheOtp == "" {
+        return errors.New("OTP expired or not found")
+    }
+    
+    // Don't log sensitive information like OTPs
+    // log.Printf(email, userOtp, cacheOtp) - REMOVE THIS LINE
+    
+    // Verify OTP
+    isValid, err := uc.otpService.VerifyOTP(ctx, email, userOtp, cacheOtp)
     if err != nil {
-        log.Printf("Failed to verify user : %v", err)
-        return err
+        return fmt.Errorf("OTP verification failed: %w", err)
     }
 
-    if isValid {
-        user , err := uc.redisRepo.GetUserData(ctx,email)
-
-        if err != nil {
-            log.Printf("Failed to retrive user from cache : %v", err)
-            return err
-        } 
-
-        log.Print(user)
-        uc.RegisterUser(ctx,user)
+    if !isValid {
+        return errors.New("invalid OTP")
     }
+    
+    // If OTP is valid, get user data from cache
+    user, err := uc.redisRepo.GetUserData(ctx, email)
+    if err != nil {
+        return fmt.Errorf("failed to retrieve user data: %w", err)
+    }
+    
+    if user == nil {
+        return errors.New("user data expired or not found")
+    }
+
+    // Register the user
+    if err := uc.RegisterUser(ctx, user); err != nil {
+        return fmt.Errorf("failed to register user: %w", err)
+    }
+    
+    // Clean up cache after successful registration
+    if err := uc.redisRepo.DeleteKey(ctx, otpKey); err != nil {
+        // Just log this error, don't return it as the registration was successful
+        log.Printf("Warning: Failed to delete OTP key: %v", err)
+    }
+    
+    // Also clean up the user data cache
+    if err := uc.redisRepo.DeleteKey(ctx, "user:"+email); err != nil {
+        log.Printf("Warning: Failed to delete user data cache: %v", err)
+    }
+
     return nil
 }

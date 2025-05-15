@@ -6,7 +6,6 @@ import (
     "github.com/redis/go-redis/v9"
     "user-service/internal/domain"
     "encoding/json"
-    "fmt"
 )
 
 type RedisRepo struct {
@@ -61,7 +60,6 @@ func (r *RedisRepo) GetProfile(ctx context.Context, userID string) (*domain.User
 
 // SetOTP stores the OTP for a given email with expiration
 func (r *RedisRepo) SetOTP(ctx context.Context, email string, otp string, expiration time.Duration) error {
-    fmt.Errorf("invalid input data: %v", email)
 	return r.client.Set(ctx, "otp:"+email, otp, expiration).Err()
 }
 
