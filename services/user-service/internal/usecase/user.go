@@ -174,10 +174,10 @@ func (uc *UserUsecase) GetProfile(ctx context.Context, userID string) (*domain.U
 func (uc *UserUsecase) SendOTPtoUser(ctx context.Context, user *domain.User) error {
     // Check if user already exists in database
     existingUser, err := uc.userRepo.FindByCredentials(ctx, user.Username)
-    if err != nil {
-        // Only return unexpected errors, not "user not found" which is expected
-        return fmt.Errorf("error checking existing user: %w", err)
-    }
+    // if err != nil {
+    //     // Only return unexpected errors, not "user not found" which is expected
+    //     return fmt.Errorf("error checking existing user: %w", err)
+    // }
 
     if existingUser != nil {
         return errors.New("username already exists")
