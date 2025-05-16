@@ -263,7 +263,7 @@ export class ServiceClient extends EventEmitter {
     
     // Configure default services
     this.configureService('user-service', {
-      host: 'localhost',
+      host: process.env.USER_SERVICE_HOST || 'localhost',
       port: 3001,
       maxConnections: 100,
       minConnections: 5,
