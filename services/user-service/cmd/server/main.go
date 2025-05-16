@@ -14,7 +14,6 @@ import (
 	"user-service/internal/usecase"
 	"github.com/joho/godotenv"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -46,16 +45,7 @@ func main() {
 	defer pgPool.Close()
 
 	// Configure Redis client with optimized settings
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:         os.Getenv("REDIS_URL"),
-		Password:     "", // Add if needed
-		DB:           0,  // Default DB
-		PoolSize:     10,
-		MinIdleConns: 5,
-		DialTimeout:  5 * time.Second,
-		ReadTimeout:  3 * time.Second,
-		WriteTimeout: 3 * time.Second,
-	})
+	redisClient := infrastructure.NewRedisClient()
 	defer redisClient.Close()
 
 	// Verify Redis connection
