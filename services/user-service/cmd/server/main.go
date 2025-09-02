@@ -1,73 +1,78 @@
 package main
 
 import (
-	"context"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
-	"path/filepath"
-	"user-service/internal/delivery/messaging" 
-	"user-service/internal/infrastructure" 
-	"user-service/internal/repository"
-	"user-service/internal/usecase"
+
 	"github.com/joho/godotenv"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"user-service-new/internal/application/services"
+	"user-service-new/internal/infrastructure"
+	postgresRepo "user-service-new/internal/infrastructure/db/postgres"
+	"user-service-new/internal/interface/tcp"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func main() {
-	// Load env variables 
-	if envErr := godotenv.Load(filepath.Join("..", "..", ".env")); envErr != nil {
-        log.Println("No .env file found or error loading .env")
-    }
-	// Create a context with cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Load environment variables from project root
+	if err := godotenv.Load("../../.env"); err != nil {
+		log.Printf("No .env file found in project root: %v", err)
+		// Try current directory
+		if err := godotenv.Load(".env"); err != nil {
+			log.Printf("No .env file found in current directory: %v", err)
+		}
+	}
 
-	// PostgreSQL connection with optimized pool settings
-	pgConfig, err := pgxpool.ParseConfig(os.Getenv("PostgreSQL"))
+	// Initialize database
+	db, err := initDatabase()
 	if err != nil {
-		log.Fatalf("Unable to parse PostgreSQL config: %v", err)
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	// Connection pool optimization
-	pgConfig.MaxConns = 20
-	pgConfig.MinConns = 5
-	pgConfig.MaxConnLifetime = time.Hour
-	pgConfig.MaxConnIdleTime = 30 * time.Minute
-	pgConfig.HealthCheckPeriod = 5 * time.Minute
+	log.Printf("Connected to database: %v", db)
 
-	pgPool, err := pgxpool.NewWithConfig(ctx, pgConfig)
-	if err != nil {
-		log.Fatalf("Unable to connect to PostgreSQL: %v", err)
-	}
-	defer pgPool.Close()
+	// // Auto migrate database
+	// if err := db.AutoMigrate(&postgresRepo.UserModel{}); err != nil {
+	// 	log.Fatalf("Failed to migrate database: %v", err)
+	// }
 
-	// Configure Redis client with optimized settings
-	redisClient := infrastructure.NewRedisClient()
-	defer redisClient.Close()
+	// Initialize infrastructure services
+	redisService := infrastructure.NewRedisService()
+	defer redisService.Close()
 
-	// Verify Redis connection
-	if _, err := redisClient.Ping(ctx).Result(); err != nil {
-		log.Fatalf("Failed to connect to Redis: %v", err)
-	}
-
-	// Setup service layers
-	userRepo := repository.NewUserRepo(pgPool)
-	redisRepo := repository.NewRedisRepo(redisClient)
-	jwtService := infrastructure.NewJWTService() 
+	jwtService := infrastructure.NewJWTService()
 	otpService := infrastructure.NewOTPService()
-	otpRateLimiter := infrastructure.NewRateLimiter(15*time.Minute, 5)
-	userUsecase := usecase.NewUserUsecase(userRepo, redisRepo, jwtService, otpService, otpRateLimiter)
+	rateLimiter := infrastructure.NewRateLimiter(15*time.Minute, 5)
+
+	// Initialize repositories
+	userRepo := postgresRepo.NewUserRepository(db)
+	idempotencyRepo := postgresRepo.NewIdempotencyRepository(db)
+
+	// Initialize services
+	userService := services.NewUserService(
+		userRepo,
+		idempotencyRepo,
+		redisService,
+		jwtService,
+		otpService,
+		rateLimiter,
+	)
 
 	// Initialize TCP handler
-	tcpHandler := tcp.NewTCPHandler(userUsecase)
+	tcpHandler := tcp.NewTCPHandler(userService)
 
 	// Start TCP server in a goroutine
 	go func() {
-		log.Println("Starting TCP server on port 3001")
-		if err := tcpHandler.Start(":3001"); err != nil {
+		port := os.Getenv("TCP_PORT")
+		if port == "" {
+			port = "3001"
+		}
+
+		log.Printf("Starting TCP server on port %s", port)
+		if err := tcpHandler.Start(":" + port); err != nil {
 			log.Fatalf("TCP server failed: %v", err)
 		}
 	}()
@@ -86,4 +91,36 @@ func main() {
 	}
 
 	log.Println("Service shutdown completed successfully")
+}
+
+func initDatabase() (*gorm.DB, error) {
+	// Check for DATABASE_URL first
+	dsn := os.Getenv("DATABASE_URL")
+	log.Printf("DATABASE_URL from environment: %s", dsn)
+
+	
+
+	log.Printf("Connecting to database with DSN: %s", dsn)
+
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+
+	// Configure connection pool from environment variables
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+
+	// Get connection pool settings from environment
+	maxIdleConns := infrastructure.GetEnvAsInt("DB_MAX_IDLE_CONNS", 10)
+	maxOpenConns := infrastructure.GetEnvAsInt("DB_MAX_OPEN_CONNS", 100)
+	connMaxLifetime := infrastructure.GetEnvAsDuration("DB_CONN_MAX_LIFETIME", time.Hour)
+
+	sqlDB.SetMaxIdleConns(maxIdleConns)
+	sqlDB.SetMaxOpenConns(maxOpenConns)
+	sqlDB.SetConnMaxLifetime(connMaxLifetime)
+
+	return db, nil
 }

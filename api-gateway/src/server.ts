@@ -10,8 +10,6 @@ function startServer() {
   // Setup HTTP routes
   registerRoutes(app, serviceClient);
 
-  // Setup WebSocket behavior
-
   // Start server
   app.listen(3000, (token) => {
     if (token) {
